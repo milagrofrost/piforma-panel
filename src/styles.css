@@ -131,6 +131,24 @@ button {
   line-height: 16px;
 }
 
+.popup-menu {
+  position: relative;
+  z-index: 1;
+  top: 0;
+  left: 0;
+}
+
+.measure-menu {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  visibility: hidden;
+}
+
+.measure-submenu {
+  display: block;
+}
+
 .menu-item {
   position: relative;
   width: 100%;
