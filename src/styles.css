@@ -1,0 +1,192 @@
+:root {
+  --bar-width: 656px;
+  --bar-height: 20px;
+  --radius-tl: 18px;
+  --radius-tr: 18px;
+  --panel-font: ChicagoFLF;
+  --panel-font-size: 13px;
+  --menu-max-height: 420px;
+}
+
+:root,
+html,
+body,
+#app {
+  width: var(--bar-width);
+  height: var(--bar-height);
+  margin: 0;
+  overflow: visible;
+  background: transparent;
+  background-color: transparent;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  user-select: none;
+  font-family: var(--panel-font), "Chicago", "Geneva", "Tahoma", sans-serif;
+  font-size: var(--panel-font-size);
+}
+
+button {
+  font: inherit;
+}
+
+.menu-bar {
+  width: var(--bar-width);
+  height: var(--bar-height);
+  min-height: var(--bar-height);
+  max-height: var(--bar-height);
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  overflow: visible;
+  color: #000;
+  background: #fff;
+  border: 1px solid #000;
+  border-top-left-radius: var(--radius-tl);
+  border-top-right-radius: var(--radius-tr);
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.menu-left,
+.menu-right {
+  height: 18px;
+  display: flex;
+  align-items: center;
+}
+
+.menu-left {
+  min-width: 0;
+  padding-left: 12px;
+}
+
+.menu-right {
+  padding-right: 13px;
+}
+
+.apple-button,
+.menu-title {
+  height: 18px;
+  margin: 0;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #000;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.apple-button {
+  width: 24px;
+  padding: 0;
+}
+
+.apple-button img {
+  width: 14px;
+  height: 16px;
+  object-fit: contain;
+  image-rendering: auto;
+}
+
+.apple-fallback {
+  width: 38px;
+  font-size: 11px;
+}
+
+.menu-title.is-open,
+.apple-button.is-open,
+.menu-title:active,
+.apple-button:active {
+  color: #fff;
+  background: #000;
+}
+
+.clock {
+  min-width: 76px;
+  height: 18px;
+  line-height: 18px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.menu {
+  position: fixed;
+  z-index: 10;
+  min-width: 184px;
+  padding: 3px 0;
+  color: #000;
+  background: #fff;
+  border: 1px solid #000;
+  box-shadow: 2px 2px 0 #000;
+  font-family: var(--panel-font), "Chicago", "Geneva", "Tahoma", sans-serif;
+  font-size: var(--panel-font-size);
+  line-height: 16px;
+}
+
+.menu-item {
+  position: relative;
+  width: 100%;
+  min-height: 18px;
+  margin: 0;
+  padding: 1px 24px 1px 18px;
+  display: block;
+  color: #000;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.menu-item:disabled {
+  color: #777;
+}
+
+.menu-item:not(:disabled):hover,
+.has-submenu:hover {
+  color: #fff;
+  background: #000;
+}
+
+.separator {
+  height: 1px;
+  margin: 3px 7px;
+  background: #9b9b9b;
+  border-bottom: 1px solid #fff;
+}
+
+.has-submenu::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid currentColor;
+}
+
+.submenu {
+  position: absolute;
+  display: none;
+  top: -4px;
+  left: calc(100% - 2px);
+}
+
+.has-submenu:hover > .submenu {
+  display: block;
+}
+
+.scrollable {
+  max-height: var(--menu-max-height);
+  overflow-y: auto;
+}
