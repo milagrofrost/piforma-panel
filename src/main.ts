@@ -59,6 +59,7 @@ type MenuAction =
 
 type RenderMenuPopupPayload = {
   label: string;
+  submenu?: "applications" | "control_panels";
   items: MenuItem[];
   width: number;
   height: number;
@@ -83,6 +84,7 @@ let popupMode: PopupMode = "main";
 let popupBlurCloseTimer: number | null = null;
 let activePrimaryPopup: { x: number; y: number; width: number; height: number } | null = null;
 let activeFlyoutSubmenu: "applications" | "control_panels" | null = null;
+let activeFlyoutRow: HTMLElement | null = null;
 let flyoutOpen = false;
 
 markFrontendLoaded();
@@ -381,6 +383,7 @@ async function initializePrimaryPopupWindow() {
   });
   await listen("menu-flyout-rendered", () => {
     cancelPopupBlurClose();
+    flyoutOpen = true;
   });
   void frontendLog("popup waiting for render-menu-popup");
 }
@@ -453,8 +456,15 @@ function buildMenu(
       if (!options.inertActions) {
         const openSubmenu = async () => {
           cancelPopupBlurClose();
-          if (!options.primaryPopup || activeFlyoutSubmenu === item.submenu) {
+          if (!options.primaryPopup) {
             return;
+          }
+          setActiveFlyoutRow(row);
+          if (activeFlyoutSubmenu === item.submenu && flyoutOpen) {
+            return;
+          }
+          if (activeFlyoutSubmenu !== null && activeFlyoutSubmenu !== item.submenu) {
+            void frontendLog(`flyout submenu switched: ${activeFlyoutSubmenu} -> ${item.submenu}`);
           }
           activeFlyoutSubmenu = item.submenu;
           await openFlyout(row, item, options.primaryPopup);
@@ -501,7 +511,10 @@ async function openFlyout(
 ) {
   const menu = measureMenu(item.items, { maxHeight: config.applications.max_menu_height });
   const rowRect = row.getBoundingClientRect();
-  const x = primaryPopup.x + primaryPopup.width - 1;
+  const rightX = primaryPopup.x + primaryPopup.width - 1;
+  const screenLeft = (window.screen as Screen & { availLeft?: number }).availLeft ?? 0;
+  const screenRight = screenLeft + window.screen.availWidth;
+  const x = rightX + menu.width <= screenRight ? rightX : primaryPopup.x - menu.width + 1;
   const y = primaryPopup.y + Math.floor(rowRect.top);
   flyoutOpen = true;
   await frontendLog(
@@ -509,6 +522,7 @@ async function openFlyout(
   );
   await invoke("open_menu_flyout", {
     label: item.label,
+    submenu: item.submenu,
     x,
     y,
     width: menu.width,
@@ -523,7 +537,19 @@ async function closeFlyout() {
   }
   flyoutOpen = false;
   activeFlyoutSubmenu = null;
+  clearActiveFlyoutRow();
   await invoke("close_menu_flyout");
+}
+
+function setActiveFlyoutRow(row: HTMLElement) {
+  activeFlyoutRow?.classList.remove("submenu-open");
+  activeFlyoutRow = row;
+  activeFlyoutRow.classList.add("submenu-open");
+}
+
+function clearActiveFlyoutRow() {
+  activeFlyoutRow?.classList.remove("submenu-open");
+  activeFlyoutRow = null;
 }
 
 function measureMenu(items: MenuItem[], options: { maxHeight?: number } = {}) {
@@ -656,6 +682,7 @@ async function closeMenu(options: { pointerEvent?: PointerEvent } = {}) {
   document.querySelectorAll<HTMLElement>("body > .menu").forEach((menu) => menu.remove());
   flyoutOpen = false;
   activeFlyoutSubmenu = null;
+  clearActiveFlyoutRow();
   clearOpenMenuState();
   clearInteractionState(options.pointerEvent);
   await invoke("close_menu_popup");

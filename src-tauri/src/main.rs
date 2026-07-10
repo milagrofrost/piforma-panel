@@ -333,24 +333,43 @@ fn apply_popup_gtk_size(
     let gtk_window = window.gtk_window().map_err(|err| err.to_string())?;
 
     gtk_window.set_size_request(-1, -1);
-    gtk_window.set_default_size(width_i32, height_i32);
 
     if let Ok(vbox) = window.default_vbox() {
         vbox.set_size_request(-1, -1);
         for child in vbox.children() {
             child.set_size_request(-1, -1);
         }
+    }
 
+    gtk_window.set_default_size(width_i32, height_i32);
+    window
+        .set_size(tauri::Size::Physical(tauri::PhysicalSize { width, height }))
+        .map_err(|err| err.to_string())?;
+    gtk_window.resize(width_i32, height_i32);
+    gtk_window.set_size_request(width_i32, height_i32);
+
+    if let Ok(vbox) = window.default_vbox() {
         vbox.set_size_request(width_i32, height_i32);
         for child in vbox.children() {
             child.set_size_request(width_i32, height_i32);
         }
     }
 
-    gtk_window.set_size_request(width_i32, height_i32);
     gtk_window.resize(width_i32, height_i32);
 
     println!("gtk popup size applied: width={width}, height={height}");
+    Ok(())
+}
+
+fn reset_popup_gtk_size(window: &tauri::WebviewWindow) -> Result<(), String> {
+    let gtk_window = window.gtk_window().map_err(|err| err.to_string())?;
+    gtk_window.set_size_request(-1, -1);
+    if let Ok(vbox) = window.default_vbox() {
+        vbox.set_size_request(-1, -1);
+        for child in vbox.children() {
+            child.set_size_request(-1, -1);
+        }
+    }
     Ok(())
 }
 
@@ -424,6 +443,9 @@ async fn open_menu_popup(
     let popup = ensure_menu_popup_window(&app)?;
 
     popup.hide().map_err(|err| err.to_string())?;
+    hide_menu_flyout_window(&app);
+    reset_popup_gtk_size(&popup)?;
+    popup.set_resizable(true).map_err(|err| err.to_string())?;
     popup
         .set_min_size(Some(tauri::Size::Physical(tauri::PhysicalSize {
             width: MAIN_WINDOW_MIN_WIDTH,
@@ -453,6 +475,7 @@ async fn open_menu_popup(
 async fn open_menu_flyout(
     app: tauri::AppHandle,
     label: String,
+    submenu: String,
     x: i32,
     y: i32,
     width: u32,
@@ -461,11 +484,13 @@ async fn open_menu_flyout(
 ) -> Result<(), String> {
     let item_count = items.as_array().map_or(0, Vec::len);
     println!(
-        "flyout requested: label={label}, x={x}, y={y}, width={width}, height={height}, item_count={item_count}"
+        "flyout requested: label={label}, submenu={submenu}, x={x}, y={y}, width={width}, height={height}, item_count={item_count}"
     );
     let flyout = ensure_menu_flyout_window(&app)?;
 
     flyout.hide().map_err(|err| err.to_string())?;
+    reset_popup_gtk_size(&flyout)?;
+    flyout.set_resizable(true).map_err(|err| err.to_string())?;
     flyout
         .set_min_size(Some(tauri::Size::Physical(tauri::PhysicalSize {
             width: MAIN_WINDOW_MIN_WIDTH,
@@ -481,7 +506,7 @@ async fn open_menu_flyout(
     flyout
         .emit(
             "render-menu-flyout",
-            serde_json::json!({ "label": label, "items": items, "width": width, "height": height, "x": x, "y": y }),
+            serde_json::json!({ "label": label, "submenu": submenu, "items": items, "width": width, "height": height, "x": x, "y": y }),
         )
         .map_err(|err| err.to_string())?;
 
@@ -512,13 +537,9 @@ fn menu_popup_rendered(
             "primary menu popup requested after render: label={label}, width={width}, height={height}"
         );
         resize_menu_popup_window(&window, width, height)?;
-        window.show().map_err(|err| err.to_string())?;
         window.set_focus().map_err(|err| err.to_string())?;
-        window
-            .set_size(tauri::Size::Physical(tauri::PhysicalSize { width, height }))
-            .map_err(|err| err.to_string())?;
-        apply_popup_gtk_size(&window, width, height)?;
         window.set_resizable(false).map_err(|err| err.to_string())?;
+        window.show().map_err(|err| err.to_string())?;
         println!("primary menu popup shown: label={label}");
         log_popup_actual_size(&window, PRIMARY_MENU_POPUP_LABEL, "final", width, height);
     }
@@ -535,12 +556,8 @@ fn menu_flyout_rendered(
     if let Some(window) = app.get_webview_window(FLYOUT_MENU_POPUP_LABEL) {
         println!("flyout rendered: label={label}, width={width}, height={height}");
         resize_menu_popup_window(&window, width, height)?;
-        window.show().map_err(|err| err.to_string())?;
-        window
-            .set_size(tauri::Size::Physical(tauri::PhysicalSize { width, height }))
-            .map_err(|err| err.to_string())?;
-        apply_popup_gtk_size(&window, width, height)?;
         window.set_resizable(false).map_err(|err| err.to_string())?;
+        window.show().map_err(|err| err.to_string())?;
         if let Err(err) = app.emit("menu-flyout-rendered", ()) {
             eprintln!("failed to emit menu-flyout-rendered: {err}");
         }
@@ -569,7 +586,7 @@ fn select_menu_action(
         .and_then(serde_json::Value::as_str)
         .is_some_and(|kind| kind == "launch_app")
     {
-        println!("selected flyout application: {label}");
+        println!("flyout application selected: {label}");
     }
     hide_menu_popup_window(&app, true);
     app.emit("menu-action-selected", SelectedMenuAction { label, action })
