@@ -142,6 +142,7 @@ fn main() {
             if let Some(window) = app.get_webview_window("main") {
                 configure_main_window(&window, &config, "setup")?;
             }
+            ensure_menu_popup_window(app.handle())?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -152,6 +153,7 @@ fn main() {
             frontend_log,
             open_menu_popup,
             close_menu_popup,
+            menu_popup_rendered,
             select_menu_action,
             list_applications,
             list_control_panels,
@@ -356,31 +358,12 @@ async fn open_menu_popup(
     y: i32,
     width: u32,
     height: u32,
+    items: serde_json::Value,
 ) -> Result<(), String> {
     println!("open_menu_popup start: label={label}, x={x}, y={y}, width={width}, height={height}");
-    close_menu_popup_window(&app);
-    println!(
-        "primary menu popup created: label={label}, x={x}, y={y}, width={width}, height={height}"
-    );
+    let popup = ensure_menu_popup_window(&app)?;
 
-    let popup = WebviewWindowBuilder::new(
-        &app,
-        PRIMARY_MENU_POPUP_LABEL,
-        WebviewUrl::App("index.html?popup=menu".into()),
-    )
-    .title("PiForma Menu")
-    .inner_size(width as f64, height as f64)
-    .position(x as f64, y as f64)
-    .resizable(false)
-    .fullscreen(false)
-    .decorations(false)
-    .transparent(true)
-    .shadow(false)
-    .skip_taskbar(true)
-    .focused(true)
-    .build()
-    .map_err(|err| err.to_string())?;
-
+    popup.hide().map_err(|err| err.to_string())?;
     popup
         .set_min_size(Some(tauri::Size::Physical(tauri::PhysicalSize {
             width: MAIN_WINDOW_MIN_WIDTH,
@@ -397,13 +380,35 @@ async fn open_menu_popup(
     popup
         .set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }))
         .map_err(|err| err.to_string())?;
+    println!(
+        "primary menu popup updated: label={label}, x={x}, y={y}, width={width}, height={height}"
+    );
+    log_popup_actual_size(&popup, "updated");
+    popup
+        .emit(
+            "render-menu-popup",
+            serde_json::json!({ "label": label, "items": items }),
+        )
+        .map_err(|err| err.to_string())?;
 
     Ok(())
 }
 
 #[tauri::command]
 fn close_menu_popup(app: tauri::AppHandle) -> Result<(), String> {
-    close_menu_popup_window(&app);
+    hide_menu_popup_window(&app, true);
+    Ok(())
+}
+
+#[tauri::command]
+fn menu_popup_rendered(app: tauri::AppHandle, label: String) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(PRIMARY_MENU_POPUP_LABEL) {
+        println!("primary menu popup rendered: label={label}");
+        window.show().map_err(|err| err.to_string())?;
+        window.set_focus().map_err(|err| err.to_string())?;
+        println!("primary menu popup shown: label={label}");
+        log_popup_actual_size(&window, "shown");
+    }
     Ok(())
 }
 
@@ -414,21 +419,61 @@ fn select_menu_action(
     action: serde_json::Value,
 ) -> Result<(), String> {
     println!("selected menu action: {label}");
-    close_menu_popup_window(&app);
+    hide_menu_popup_window(&app, true);
     app.emit("menu-action-selected", SelectedMenuAction { label, action })
         .map_err(|err| err.to_string())
 }
 
-fn close_menu_popup_window(app: &tauri::AppHandle) {
+fn ensure_menu_popup_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
     if let Some(window) = app.get_webview_window(PRIMARY_MENU_POPUP_LABEL) {
-        println!("primary menu popup destroyed");
-        if let Err(err) = window.close() {
-            eprintln!("failed to close primary menu popup: {err}");
+        return Ok(window);
+    }
+
+    let popup = WebviewWindowBuilder::new(
+        app,
+        PRIMARY_MENU_POPUP_LABEL,
+        WebviewUrl::App("index.html?popup=menu".into()),
+    )
+    .title("PiForma Menu")
+    .inner_size(1.0, 1.0)
+    .position(0.0, 0.0)
+    .resizable(false)
+    .fullscreen(false)
+    .decorations(false)
+    .transparent(true)
+    .shadow(false)
+    .skip_taskbar(true)
+    .focused(false)
+    .visible(false)
+    .build()
+    .map_err(|err| err.to_string())?;
+
+    println!("primary menu popup created once hidden");
+    Ok(popup)
+}
+
+fn hide_menu_popup_window(app: &tauri::AppHandle, emit_closed: bool) {
+    if let Some(window) = app.get_webview_window(PRIMARY_MENU_POPUP_LABEL) {
+        if let Err(err) = window.hide() {
+            eprintln!("failed to hide primary menu popup: {err}");
+        } else {
+            println!("primary menu popup hidden");
+            log_popup_actual_size(&window, "hidden");
         }
+    }
+    if emit_closed {
         if let Err(err) = app.emit("menu-popup-closed", ()) {
             eprintln!("failed to emit menu-popup-closed: {err}");
         }
     }
+}
+
+fn log_popup_actual_size(window: &tauri::WebviewWindow, phase: &str) {
+    println!(
+        "primary menu popup {phase}: actual inner_size={}; actual outer_size={}",
+        format_size_result(window.inner_size()),
+        format_size_result(window.outer_size())
+    );
 }
 
 #[tauri::command]

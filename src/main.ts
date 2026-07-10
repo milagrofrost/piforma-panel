@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import "./styles.css";
 
 const STATIC_FRONTEND_MARKER_ID = "static-frontend-marker";
+const DEBUG_EVENT_DIAGNOSTICS = false;
 
 type PanelConfig = {
   bar: {
@@ -53,6 +54,11 @@ type MenuAction =
   | { kind: "run_system_action"; action: string; confirmed: boolean }
   | { kind: "confirmed_system_action"; action: "restart" | "shut_down"; message: string };
 
+type RenderMenuPopupPayload = {
+  label: string;
+  items: MenuItem[];
+};
+
 const app = document.querySelector<HTMLDivElement>("#app");
 
 if (!app) {
@@ -65,8 +71,7 @@ let config: PanelConfig;
 let openButton: HTMLElement | null = null;
 let globalMenuListenersInstalled = false;
 let isPopupWindow = false;
-
-const menuStorageKey = "piforma-panel-open-menu";
+let popupBlurCloseTimer: number | null = null;
 
 markFrontendLoaded();
 void init();
@@ -128,7 +133,7 @@ async function init() {
   if (isPopupWindow) {
     void frontendLog("popup mode init");
     document.body.classList.add("popup-window");
-    renderPopupMenu();
+    await initializePopupWindow();
     return;
   }
 
@@ -148,11 +153,6 @@ async function init() {
   updateClock();
   window.setInterval(updateClock, 1000);
 }
-
-type StoredMenu = {
-  label: string;
-  items: MenuItem[];
-};
 
 function renderPanel(logo: string | null, applications: DesktopApp[]) {
   void frontendLog("frontend renderPanel start");
@@ -185,7 +185,7 @@ function renderPanel(logo: string | null, applications: DesktopApp[]) {
       { kind: "item", label: "Calculator", action: launchNamedAction(applications, "calculator") }
     ]).catch(console.error);
   });
-  addButtonEventDiagnostics(appleButton, "Apple");
+  installButtonEventDiagnostics(appleButton, "Apple");
   left.append(appleButton);
 
   if (config.menus.show_file) {
@@ -247,7 +247,7 @@ function menuTitle(label: string, items: MenuItem[]) {
     void frontendLog(`menuTitle click handler start: ${label}`);
     void toggleMenu(button, items).catch(console.error);
   });
-  addButtonEventDiagnostics(button, label);
+  installButtonEventDiagnostics(button, label);
   return button;
 }
 
@@ -270,7 +270,9 @@ async function toggleMenu(button: HTMLElement, items: MenuItem[]) {
     return;
   }
 
-  await closeMenu();
+  if (openButton) {
+    openButton.classList.remove("is-open");
+  }
   const rect = button.getBoundingClientRect();
   const menu = measureMenu(items);
   const label = button.getAttribute("aria-label") ?? button.textContent ?? "Menu";
@@ -280,7 +282,6 @@ async function toggleMenu(button: HTMLElement, items: MenuItem[]) {
   await frontendLog(`menu item count=${items.length}`);
   await frontendLog(`measured menu width=${menu.width}, height=${menu.height}`);
   await frontendLog(`computed popup x=${x}, y=${y}`);
-  localStorage.setItem(menuStorageKey, JSON.stringify({ label, items } satisfies StoredMenu));
   openButton = button;
   button.classList.add("is-open");
   try {
@@ -290,7 +291,8 @@ async function toggleMenu(button: HTMLElement, items: MenuItem[]) {
       x,
       y,
       width: menu.width,
-      height: menu.height
+      height: menu.height,
+      items
     });
     await frontendLog("after successful open_menu_popup");
   } catch (error) {
@@ -300,34 +302,20 @@ async function toggleMenu(button: HTMLElement, items: MenuItem[]) {
   }
 }
 
-function renderPopupMenu() {
-  const stored = readStoredMenu();
-  if (!stored) {
-    void closeMenu().catch(console.error);
-    return;
-  }
-
-  const menu = buildMenu(stored.items);
-  appRoot.replaceChildren(menu);
-  void frontendLog(`popup rendered item count=${stored.items.length}`);
+async function initializePopupWindow() {
+  appRoot.replaceChildren();
+  await listen<RenderMenuPopupPayload>("render-menu-popup", async (event) => {
+    cancelPopupBlurClose();
+    renderPopupMenu(event.payload);
+    await invoke("menu_popup_rendered", { label: event.payload.label });
+  });
+  void frontendLog("popup waiting for render-menu-popup");
 }
 
-function readStoredMenu() {
-  const raw = localStorage.getItem(menuStorageKey);
-  if (!raw) {
-    void frontendLog("popup readStoredMenu failure: missing stored menu");
-    return null;
-  }
-
-  try {
-    const stored = JSON.parse(raw) as StoredMenu;
-    void frontendLog(`popup readStoredMenu success: label=${stored.label}, items=${stored.items.length}`);
-    return stored;
-  } catch (error) {
-    console.error(error);
-    void frontendLog(`popup readStoredMenu failure: ${serializeLogValue(error)}`);
-    return null;
-  }
+function renderPopupMenu(payload: RenderMenuPopupPayload) {
+  const menu = buildMenu(payload.items);
+  appRoot.replaceChildren(menu);
+  void frontendLog(`popup rendered label=${payload.label}, item count=${payload.items.length}`);
 }
 
 function buildMenu(items: MenuItem[], options: { inertActions?: boolean } = {}) {
@@ -389,13 +377,28 @@ function installGlobalMenuListeners() {
   window.addEventListener("blur", () => {
     if (isPopupWindow) {
       void frontendLog("popup blur");
-      void closeMenu().catch(console.error);
+      cancelPopupBlurClose();
+      popupBlurCloseTimer = window.setTimeout(() => {
+        void closeMenu().catch(console.error);
+      }, 80);
     }
   });
   globalMenuListenersInstalled = true;
 }
 
+function cancelPopupBlurClose() {
+  if (popupBlurCloseTimer === null) {
+    return;
+  }
+  window.clearTimeout(popupBlurCloseTimer);
+  popupBlurCloseTimer = null;
+}
+
 function installEventPathDiagnostics() {
+  if (!DEBUG_EVENT_DIAGNOSTICS) {
+    return;
+  }
+
   for (const eventType of ["pointerdown", "mousedown", "mouseup", "click"]) {
     document.addEventListener(
       eventType,
@@ -410,7 +413,11 @@ function installEventPathDiagnostics() {
   }
 }
 
-function addButtonEventDiagnostics(button: HTMLElement, label: string) {
+function installButtonEventDiagnostics(button: HTMLElement, label: string) {
+  if (!DEBUG_EVENT_DIAGNOSTICS) {
+    return;
+  }
+
   for (const eventType of ["pointerdown", "mousedown", "mouseup", "click"]) {
     button.addEventListener(eventType, () => {
       void frontendLog(`button event: ${label} ${eventType}`);
@@ -451,13 +458,17 @@ function handleGlobalPointerDown(event: PointerEvent) {
   if (!(target instanceof Node)) {
     return;
   }
-  if (!isPopupWindow && openButton && !openButton.contains(target)) {
+  if (!isPopupWindow && openButton && !openButton.contains(target) && !isPanelMenuButton(target)) {
     console.log("outside-click close: main window pointerdown outside active menu button");
     void closeMenu({ pointerEvent: event }).catch(console.error);
   }
   if (isPopupWindow && target instanceof Element && !target.closest(".menu")) {
     void closeMenu({ pointerEvent: event }).catch(console.error);
   }
+}
+
+function isPanelMenuButton(target: Node) {
+  return target instanceof Element && target.closest(".apple-button, .menu-title");
 }
 
 function handleGlobalKeyDown(event: KeyboardEvent) {
