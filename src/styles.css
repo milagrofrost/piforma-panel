@@ -30,13 +30,6 @@ body {
   font-size: var(--panel-font-size);
 }
 
-body.popup-window,
-body.popup-window #app {
-  width: 100vw;
-  height: 100vh;
-  overflow: hidden;
-}
-
 button {
   font: inherit;
 }
@@ -135,20 +128,6 @@ button {
   font-family: var(--panel-font), "Chicago", "Geneva", "Tahoma", sans-serif;
   font-size: var(--panel-font-size);
   line-height: 16px;
-}
-
-.popup-menu {
-  position: relative;
-  z-index: 1;
-  top: 0;
-  left: 0;
-}
-
-.measure-menu {
-  position: fixed;
-  top: 0;
-  left: -10000px;
-  visibility: hidden;
 }
 
 .menu-item {

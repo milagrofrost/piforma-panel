@@ -1,6 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./styles.css";
 
 type PanelConfig = {
@@ -64,36 +62,12 @@ const appRoot = app;
 let config: PanelConfig;
 let openButton: HTMLElement | null = null;
 let globalMenuListenersInstalled = false;
-let openMenuToken = 0;
-let isPopupWindow = false;
-let popupType: "primary" | "submenu" | null = null;
-
-const menuStorageKey = "piforma-panel-open-menu";
-const submenuStorageKey = "piforma-panel-open-submenu";
 
 void init();
 
 async function init() {
-  const params = new URLSearchParams(window.location.search);
-  isPopupWindow = params.get("popup") === "menu";
-  popupType = isPopupWindow && params.get("type") === "submenu" ? "submenu" : isPopupWindow ? "primary" : null;
   config = await invoke<PanelConfig>("get_config");
-  if (isPopupWindow) {
-    document.body.classList.add("popup-window");
-  }
   installGlobalMenuListeners();
-
-  if (isPopupWindow) {
-    renderPopupMenu();
-    return;
-  }
-
-  void listen("menu-popup-closed", () => {
-    clearOpenMenuState();
-  });
-  void listen<{ label: string; action: MenuAction }>("menu-action-selected", (event) => {
-    void runMenuAction(event.payload.action).catch(console.error);
-  });
 
   await invoke("initialize_main_window");
   const logo = await invoke<string | null>("get_apple_logo_data_url");
@@ -114,15 +88,6 @@ async function init() {
   updateClock();
   window.setInterval(updateClock, 1000);
 }
-
-type StoredMenu = {
-  token: number;
-  items: MenuItem[];
-};
-
-type StoredSubmenu = StoredMenu & {
-  label: string;
-};
 
 function renderPanel(logo: string | null, applications: DesktopApp[], controlPanels: DesktopApp[]) {
   const bar = document.createElement("div");
@@ -254,59 +219,12 @@ async function toggleMenu(button: HTMLElement, items: MenuItem[]) {
 
   await closeMenu();
   const rect = button.getBoundingClientRect();
-  const size = measureMenu(items);
-  const token = openMenuToken + 1;
-  openMenuToken = token;
-  localStorage.setItem(menuStorageKey, JSON.stringify({ token, items } satisfies StoredMenu));
-  localStorage.removeItem(submenuStorageKey);
+  const menu = buildMenu(items);
+  menu.style.left = `${Math.floor(rect.left)}px`;
+  menu.style.top = `${config.bar.height}px`;
+  document.body.append(menu);
   openButton = button;
   button.classList.add("is-open");
-  await invoke("open_menu_popup", {
-    x: config.bar.x + Math.floor(rect.left),
-    y: config.bar.y + config.bar.height,
-    width: size.width,
-    height: size.height
-  });
-}
-
-function renderPopupMenu() {
-  const stored = popupType === "submenu" ? readStoredSubmenu() : readStoredMenu();
-  if (!stored) {
-    void closeMenu().catch(console.error);
-    return;
-  }
-
-  const menu = buildMenu(stored.items);
-  menu.classList.add("popup-menu");
-  appRoot.replaceChildren(menu);
-}
-
-function readStoredMenu() {
-  const raw = localStorage.getItem(menuStorageKey);
-  if (!raw) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(raw) as StoredMenu;
-  } catch (error) {
-    console.error(error);
-    return null;
-  }
-}
-
-function readStoredSubmenu() {
-  const raw = localStorage.getItem(submenuStorageKey);
-  if (!raw) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(raw) as StoredSubmenu;
-  } catch (error) {
-    console.error(error);
-    return null;
-  }
 }
 
 function buildMenu(items: MenuItem[], options: { inertActions?: boolean } = {}) {
@@ -344,17 +262,7 @@ function buildMenu(items: MenuItem[], options: { inertActions?: boolean } = {}) 
     row.textContent = item.label;
     row.disabled = item.enabled === false;
     if (!options.inertActions) {
-      row.addEventListener("pointerenter", () => {
-        if (popupType === "primary") {
-          void invoke("close_submenu_popup").catch(console.error);
-        }
-      });
       row.addEventListener("click", async () => {
-        if (isPopupWindow) {
-          await invoke("select_menu_action", { label: item.label, action: item.action });
-          return;
-        }
-
         await closeMenu();
         await runMenuAction(item.action);
       });
@@ -367,37 +275,16 @@ function buildMenu(items: MenuItem[], options: { inertActions?: boolean } = {}) 
 
 async function openSubmenu(row: HTMLElement, item: Extract<MenuItem, { kind: "submenu" }>) {
   console.log(`submenu row pointer enter: ${item.label}`);
-  const size = measureMenu(item.items, { scrollable: item.scrollable });
   const rect = row.getBoundingClientRect();
-  const position = await getCurrentWindow().outerPosition();
-  const token = openMenuToken + 1;
-  openMenuToken = token;
-  localStorage.setItem(submenuStorageKey, JSON.stringify({ token, label: item.label, items: item.items } satisfies StoredSubmenu));
-  await invoke("open_submenu_popup", {
-    label: item.label,
-    x: position.x + Math.floor(rect.right) - 2,
-    y: position.y + Math.floor(rect.top) - 3,
-    width: size.width,
-    height: size.height
-  });
-}
-
-function measureMenu(items: MenuItem[], options: { scrollable?: boolean } = {}) {
-  const menu = buildMenu(items, { inertActions: true });
-  menu.classList.add("measure-menu");
-  if (options.scrollable) {
+  document.querySelectorAll<HTMLElement>("body > .submenu-menu").forEach((menu) => menu.remove());
+  const menu = buildMenu(item.items);
+  menu.classList.add("submenu-menu");
+  if (item.scrollable) {
     menu.classList.add("scrollable");
   }
+  menu.style.left = `${Math.floor(rect.right) - 2}px`;
+  menu.style.top = `${Math.floor(rect.top) - 3}px`;
   document.body.append(menu);
-
-  const topRect = menu.getBoundingClientRect();
-
-  menu.remove();
-
-  return {
-    width: Math.max(1, Math.ceil(topRect.width)),
-    height: Math.max(1, Math.ceil(topRect.height))
-  };
 }
 
 function installGlobalMenuListeners() {
@@ -408,10 +295,7 @@ function installGlobalMenuListeners() {
   document.addEventListener("pointerdown", handleGlobalPointerDown, true);
   document.addEventListener("keydown", handleGlobalKeyDown, true);
   window.addEventListener("blur", () => {
-    if (isPopupWindow) {
-      console.log("outside-click close: popup blur/focus loss");
-      void closeMenu().catch(console.error);
-    }
+    void closeMenu().catch(console.error);
   });
   globalMenuListenersInstalled = true;
 }
@@ -421,14 +305,14 @@ function handleGlobalPointerDown(event: PointerEvent) {
   if (!(target instanceof Node)) {
     return;
   }
-  if (!isPopupWindow && openButton && !openButton.contains(target)) {
+  if (openButton && !openButton.contains(target)) {
     console.log("outside-click close: main window pointerdown outside active menu button");
     void closeMenu({ pointerEvent: event }).catch(console.error);
   }
 }
 
 function handleGlobalKeyDown(event: KeyboardEvent) {
-  if (event.key === "Escape" && (isPopupWindow || openButton)) {
+  if (event.key === "Escape" && openButton) {
     event.preventDefault();
     void closeMenu().catch(console.error);
   }
@@ -438,7 +322,6 @@ async function closeMenu(options: { pointerEvent?: PointerEvent } = {}) {
   document.querySelectorAll<HTMLElement>("body > .menu").forEach((menu) => menu.remove());
   clearOpenMenuState();
   clearInteractionState(options.pointerEvent);
-  await invoke("close_menu_popup");
 }
 
 function clearOpenMenuState() {

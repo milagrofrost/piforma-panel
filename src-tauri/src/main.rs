@@ -7,17 +7,15 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
-use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::Manager;
 
-const PRIMARY_MENU_POPUP_LABEL: &str = "menu-popup";
-const SUBMENU_POPUP_LABEL: &str = "submenu-popup";
 const MAIN_WINDOW_MIN_WIDTH: u32 = 1;
 const MAIN_WINDOW_MIN_HEIGHT: u32 = 1;
 
 const DEFAULT_CONFIG: &str = r#"bar:
-  width: 656
+  width: 658
   height: 20
-  x: 77
+  x: 76
   y: 0
   radius_top_left: 18
   radius_top_right: 18
@@ -108,12 +106,6 @@ struct DesktopApp {
     is_control_panel: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct SelectedMenuAction {
-    label: String,
-    action: serde_json::Value,
-}
-
 #[derive(Debug, Clone, Copy)]
 enum SystemAction {
     SleepDisplay,
@@ -129,7 +121,7 @@ fn main() {
     tauri::Builder::default()
         .setup(|app| {
             let config = ensure_config().map_err(|err| err.to_string())?;
-            close_menu_popup_windows(app.handle(), false);
+            print_config_diagnostics(&config)?;
             if let Some(window) = app.get_webview_window("main") {
                 configure_main_window(&window, &config, "setup")?;
             }
@@ -139,11 +131,6 @@ fn main() {
             get_config,
             get_apple_logo_data_url,
             initialize_main_window,
-            open_menu_popup,
-            open_submenu_popup,
-            close_submenu_popup,
-            close_menu_popup,
-            select_menu_action,
             list_applications,
             list_control_panels,
             launch_app,
@@ -202,10 +189,9 @@ fn configure_main_window(
             y: config.bar.y,
         }))
         .map_err(|err| err.to_string())?;
-    window.set_resizable(false).map_err(|err| err.to_string())?;
-
     log_main_window_actual_size(window, phase);
-    window.show().map_err(|err| err.to_string())
+    window.show().map_err(|err| err.to_string())?;
+    window.set_resizable(false).map_err(|err| err.to_string())
 }
 
 fn apply_tight_gtk_size(
@@ -240,17 +226,21 @@ fn log_main_window_actual_size(window: &tauri::WebviewWindow, phase: &str) {
     );
 }
 
-fn log_main_window_actual_size_for_app(app: &tauri::AppHandle, phase: &str) {
-    if let Some(window) = app.get_webview_window("main") {
-        log_main_window_actual_size(&window, phase);
-    }
-}
-
 fn format_size_result(size: tauri::Result<tauri::PhysicalSize<u32>>) -> String {
     match size {
         Ok(size) => format!("{}x{}", size.width, size.height),
         Err(err) => format!("unavailable ({err})"),
     }
+}
+
+fn print_config_diagnostics(config: &PanelConfig) -> Result<(), String> {
+    let path = config_path()?;
+    println!("config path: {}", path.display());
+    println!(
+        "config bar: width={}, height={}, x={}, y={}",
+        config.bar.width, config.bar.height, config.bar.x, config.bar.y
+    );
+    Ok(())
 }
 
 #[tauri::command]
@@ -272,148 +262,6 @@ fn initialize_main_window(app: tauri::AppHandle) -> Result<(), String> {
     }
 
     Ok(())
-}
-
-#[tauri::command]
-async fn open_menu_popup(
-    app: tauri::AppHandle,
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-) -> Result<(), String> {
-    close_menu_popup_windows(&app, false);
-
-    create_menu_popup(
-        &app,
-        PRIMARY_MENU_POPUP_LABEL,
-        "primary",
-        x,
-        y,
-        width,
-        height,
-        true,
-    )
-}
-
-#[tauri::command]
-async fn open_submenu_popup(
-    app: tauri::AppHandle,
-    label: String,
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-) -> Result<(), String> {
-    close_submenu_popup_window(&app);
-    create_menu_popup(
-        &app,
-        SUBMENU_POPUP_LABEL,
-        &format!("submenu:{label}"),
-        x,
-        y,
-        width,
-        height,
-        false,
-    )
-}
-
-fn create_menu_popup(
-    app: &tauri::AppHandle,
-    window_label: &str,
-    menu_type: &str,
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-    focused: bool,
-) -> Result<(), String> {
-    println!(
-        "menu popup created: label={window_label}, x={x}, y={y}, width={width}, height={height}, menu_type={menu_type}"
-    );
-
-    let url = if window_label == SUBMENU_POPUP_LABEL {
-        WebviewUrl::App("index.html?popup=menu&type=submenu".into())
-    } else {
-        WebviewUrl::App("index.html?popup=menu&type=primary".into())
-    };
-    let popup = WebviewWindowBuilder::new(
-        app,
-        window_label,
-        url,
-    )
-    .title("PiForma Menu")
-    .inner_size(width as f64, height as f64)
-    .position(x as f64, y as f64)
-    .resizable(true)
-    .fullscreen(false)
-    .decorations(false)
-    .transparent(true)
-    .shadow(false)
-    .skip_taskbar(true)
-    .focused(focused)
-    .build()
-    .map_err(|err| err.to_string())?;
-
-    popup
-        .set_size(tauri::Size::Physical(tauri::PhysicalSize { width, height }))
-        .map_err(|err| err.to_string())?;
-    apply_tight_gtk_size(&popup, width, height, window_label)?;
-    popup
-        .set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }))
-        .map_err(|err| err.to_string())?;
-    popup.set_resizable(false).map_err(|err| err.to_string())?;
-
-    Ok(())
-}
-
-#[tauri::command]
-fn close_submenu_popup(app: tauri::AppHandle) -> Result<(), String> {
-    close_submenu_popup_window(&app);
-    Ok(())
-}
-
-#[tauri::command]
-fn close_menu_popup(app: tauri::AppHandle) -> Result<(), String> {
-    println!("outside-click close or explicit menu close requested");
-    close_menu_popup_windows(&app, true);
-    Ok(())
-}
-
-#[tauri::command]
-fn select_menu_action(
-    app: tauri::AppHandle,
-    label: String,
-    action: serde_json::Value,
-) -> Result<(), String> {
-    println!("menu action selected: {label}");
-    close_menu_popup_windows(&app, true);
-    app.emit("menu-action-selected", SelectedMenuAction { label, action })
-        .map_err(|err| err.to_string())
-}
-
-fn close_menu_popup_windows(app: &tauri::AppHandle, emit_closed: bool) {
-    close_submenu_popup_window(app);
-    close_popup_window(app, PRIMARY_MENU_POPUP_LABEL);
-    log_main_window_actual_size_for_app(app, "after-menu-close");
-    if emit_closed {
-        if let Err(err) = app.emit("menu-popup-closed", ()) {
-            eprintln!("failed to emit menu-popup-closed: {err}");
-        }
-    }
-}
-
-fn close_submenu_popup_window(app: &tauri::AppHandle) {
-    close_popup_window(app, SUBMENU_POPUP_LABEL);
-}
-
-fn close_popup_window(app: &tauri::AppHandle, label: &str) {
-    if let Some(window) = app.get_webview_window(label) {
-        println!("menu popup destroyed: label={label}");
-        if let Err(err) = window.close() {
-            eprintln!("failed to close menu popup {label}: {err}");
-        }
-    }
 }
 
 #[tauri::command]
