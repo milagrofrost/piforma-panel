@@ -134,6 +134,7 @@ enum SystemAction {
 
 fn main() {
     print_build_info();
+    print_tauri_asset_diagnostics();
     tauri::Builder::default()
         .setup(|app| {
             let config = ensure_config().map_err(|err| err.to_string())?;
@@ -185,6 +186,35 @@ fn print_build_info() {
         "PiForma Panel build info: commit={}, branch={}, dirty={}, built_at={}",
         info.commit, info.branch, info.dirty, info.built_at
     );
+}
+
+fn print_tauri_asset_diagnostics() {
+    let config = serde_json::from_str::<serde_json::Value>(include_str!("../tauri.conf.json"));
+    match config {
+        Ok(config) => {
+            let frontend_dist = config
+                .pointer("/build/frontendDist")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("missing");
+            let csp = config
+                .pointer("/app/security/csp")
+                .map(|value| {
+                    if value.is_null() {
+                        "null".to_string()
+                    } else {
+                        value.to_string()
+                    }
+                })
+                .unwrap_or_else(|| "missing".to_string());
+            println!(
+                "tauri asset config: frontendDist={frontend_dist}, frontendDist_is_bundled_dist={}, app.security.csp={csp}",
+                frontend_dist == "../dist"
+            );
+        }
+        Err(err) => {
+            eprintln!("tauri asset config: failed to parse tauri.conf.json: {err}");
+        }
+    }
 }
 
 fn config_path() -> Result<PathBuf, String> {

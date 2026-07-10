@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./styles.css";
 
+const STATIC_FRONTEND_MARKER_ID = "static-frontend-marker";
+
 type PanelConfig = {
   bar: {
     width: number;
@@ -66,7 +68,17 @@ let isPopupWindow = false;
 
 const menuStorageKey = "piforma-panel-open-menu";
 
+markFrontendLoaded();
 void init();
+
+function markFrontendLoaded() {
+  const marker = document.getElementById(STATIC_FRONTEND_MARKER_ID);
+  if (marker) {
+    marker.textContent = "FRONTEND_JS_STARTED";
+    marker.remove();
+  }
+  void frontendLog("frontend top-level loaded");
+}
 
 function serializeLogValue(value: unknown) {
   if (value instanceof Error) {
