@@ -30,6 +30,13 @@ body {
   font-size: var(--panel-font-size);
 }
 
+body.popup-window,
+body.popup-window #app {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
 button {
   font: inherit;
 }
@@ -130,6 +137,19 @@ button {
   line-height: 16px;
 }
 
+.popup-window .menu {
+  position: relative;
+  top: 0;
+  left: 0;
+}
+
+.measure-menu {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  visibility: hidden;
+}
+
 .menu-item {
   position: relative;
   width: 100%;
@@ -149,8 +169,7 @@ button {
   color: #777;
 }
 
-.menu-item:not(:disabled):hover,
-.has-submenu:hover {
+.menu-item:not(:disabled):hover {
   color: #fff;
   background: #000;
 }
@@ -160,18 +179,6 @@ button {
   margin: 3px 7px;
   background: #9b9b9b;
   border-bottom: 1px solid #fff;
-}
-
-.has-submenu::after {
-  content: "";
-  position: absolute;
-  top: 6px;
-  right: 8px;
-  width: 0;
-  height: 0;
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  border-left: 5px solid currentColor;
 }
 
 .scrollable {

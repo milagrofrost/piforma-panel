@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import "./styles.css";
 
 type PanelConfig = {
@@ -39,8 +40,7 @@ type DesktopApp = {
 
 type MenuItem =
   | { kind: "item"; label: string; action: MenuAction; enabled?: boolean }
-  | { kind: "separator" }
-  | { kind: "submenu"; label: string; items: MenuItem[]; scrollable?: boolean };
+  | { kind: "separator" };
 
 type MenuAction =
   | { kind: "placeholder"; message: string }
@@ -62,20 +62,16 @@ const appRoot = app;
 let config: PanelConfig;
 let openButton: HTMLElement | null = null;
 let globalMenuListenersInstalled = false;
+let isPopupWindow = false;
+
+const menuStorageKey = "piforma-panel-open-menu";
 
 void init();
 
 async function init() {
+  const params = new URLSearchParams(window.location.search);
+  isPopupWindow = params.get("popup") === "menu";
   config = await invoke<PanelConfig>("get_config");
-  installGlobalMenuListeners();
-
-  await invoke("initialize_main_window");
-  const logo = await invoke<string | null>("get_apple_logo_data_url");
-  const [applications, controlPanels] = await Promise.all([
-    invoke<DesktopApp[]>("list_applications"),
-    invoke<DesktopApp[]>("list_control_panels")
-  ]);
-
   document.documentElement.style.setProperty("--bar-width", `${config.bar.width}px`);
   document.documentElement.style.setProperty("--bar-height", `${config.bar.height}px`);
   document.documentElement.style.setProperty("--radius-tl", `${config.bar.radius_top_left}px`);
@@ -84,12 +80,37 @@ async function init() {
   document.documentElement.style.setProperty("--panel-font-size", `${config.bar.font_size}px`);
   document.documentElement.style.setProperty("--menu-max-height", `${config.applications.max_menu_height}px`);
 
-  renderPanel(logo, applications, controlPanels);
+  installGlobalMenuListeners();
+
+  if (isPopupWindow) {
+    document.body.classList.add("popup-window");
+    renderPopupMenu();
+    return;
+  }
+
+  void listen<{ label: string; action: MenuAction }>("menu-action-selected", (event) => {
+    clearOpenMenuState();
+    void runMenuAction(event.payload.action).catch(console.error);
+  });
+  void listen("menu-popup-closed", () => {
+    clearOpenMenuState();
+  });
+
+  await invoke("initialize_main_window");
+  const logo = await invoke<string | null>("get_apple_logo_data_url");
+  const applications = await invoke<DesktopApp[]>("list_applications");
+
+  renderPanel(logo, applications);
   updateClock();
   window.setInterval(updateClock, 1000);
 }
 
-function renderPanel(logo: string | null, applications: DesktopApp[], controlPanels: DesktopApp[]) {
+type StoredMenu = {
+  label: string;
+  items: MenuItem[];
+};
+
+function renderPanel(logo: string | null, applications: DesktopApp[]) {
   const bar = document.createElement("div");
   bar.className = "menu-bar";
 
@@ -113,8 +134,8 @@ function renderPanel(logo: string | null, applications: DesktopApp[], controlPan
     void toggleMenu(appleButton, [
       { kind: "item", label: "About This PiForma", action: { kind: "placeholder", message: "About This PiForma" } },
       { kind: "separator" },
-      { kind: "submenu", label: "Applications", items: appItems(applications), scrollable: true },
-      { kind: "submenu", label: "Control Panels", items: appItems(controlPanels), scrollable: true },
+      { kind: "item", label: "Applications", enabled: false, action: { kind: "placeholder", message: "Applications" } },
+      { kind: "item", label: "Control Panels", enabled: false, action: { kind: "placeholder", message: "Control Panels" } },
       { kind: "item", label: "Calculator", action: launchNamedAction(applications, "calculator") }
     ]).catch(console.error);
   });
@@ -190,27 +211,6 @@ function shortcut(label: string, action: string): MenuItem {
   return { kind: "item", label, action: { kind: "send_shortcut", action } };
 }
 
-function appItems(apps: DesktopApp[]): MenuItem[] {
-  if (apps.length === 0) {
-    return [{ kind: "item", label: "No Items Found", enabled: false, action: { kind: "placeholder", message: "No Items Found" } }];
-  }
-
-  const items: MenuItem[] = [];
-  let lastGroup = "";
-  for (const app of apps) {
-    if (lastGroup && app.group !== lastGroup) {
-      items.push({ kind: "separator" });
-    }
-    items.push({
-      kind: "item",
-      label: app.name,
-      action: { kind: "launch_app", exec: app.exec, name: app.name }
-    });
-    lastGroup = app.group;
-  }
-  return items;
-}
-
 async function toggleMenu(button: HTMLElement, items: MenuItem[]) {
   if (openButton === button) {
     await closeMenu();
@@ -219,12 +219,43 @@ async function toggleMenu(button: HTMLElement, items: MenuItem[]) {
 
   await closeMenu();
   const rect = button.getBoundingClientRect();
-  const menu = buildMenu(items);
-  menu.style.left = `${Math.floor(rect.left)}px`;
-  menu.style.top = `${config.bar.height}px`;
-  document.body.append(menu);
+  const menu = measureMenu(items);
+  const label = button.getAttribute("aria-label") ?? button.textContent ?? "Menu";
+  localStorage.setItem(menuStorageKey, JSON.stringify({ label, items } satisfies StoredMenu));
   openButton = button;
   button.classList.add("is-open");
+  await invoke("open_menu_popup", {
+    label,
+    x: config.bar.x + Math.floor(rect.left),
+    y: config.bar.y + config.bar.height,
+    width: menu.width,
+    height: menu.height
+  });
+}
+
+function renderPopupMenu() {
+  const stored = readStoredMenu();
+  if (!stored) {
+    void closeMenu().catch(console.error);
+    return;
+  }
+
+  const menu = buildMenu(stored.items);
+  appRoot.replaceChildren(menu);
+}
+
+function readStoredMenu() {
+  const raw = localStorage.getItem(menuStorageKey);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw) as StoredMenu;
+  } catch (error) {
+    console.error(error);
+    return null;
+  }
 }
 
 function buildMenu(items: MenuItem[], options: { inertActions?: boolean } = {}) {
@@ -240,22 +271,6 @@ function buildMenu(items: MenuItem[], options: { inertActions?: boolean } = {}) 
       continue;
     }
 
-    if (item.kind === "submenu") {
-      const row = document.createElement("div");
-      row.className = "menu-item has-submenu";
-      row.textContent = item.label;
-      if (!options.inertActions) {
-        row.addEventListener("pointerenter", () => {
-          void openSubmenu(row, item).catch(console.error);
-        });
-        row.addEventListener("pointerleave", () => {
-          console.log(`submenu row pointer leave: ${item.label}`);
-        });
-      }
-      menu.append(row);
-      continue;
-    }
-
     const row = document.createElement("button");
     row.type = "button";
     row.className = "menu-item";
@@ -263,6 +278,11 @@ function buildMenu(items: MenuItem[], options: { inertActions?: boolean } = {}) 
     row.disabled = item.enabled === false;
     if (!options.inertActions) {
       row.addEventListener("click", async () => {
+        if (isPopupWindow) {
+          await invoke("select_menu_action", { label: item.label, action: item.action });
+          return;
+        }
+
         await closeMenu();
         await runMenuAction(item.action);
       });
@@ -273,18 +293,17 @@ function buildMenu(items: MenuItem[], options: { inertActions?: boolean } = {}) 
   return menu;
 }
 
-async function openSubmenu(row: HTMLElement, item: Extract<MenuItem, { kind: "submenu" }>) {
-  console.log(`submenu row pointer enter: ${item.label}`);
-  const rect = row.getBoundingClientRect();
-  document.querySelectorAll<HTMLElement>("body > .submenu-menu").forEach((menu) => menu.remove());
-  const menu = buildMenu(item.items);
-  menu.classList.add("submenu-menu");
-  if (item.scrollable) {
-    menu.classList.add("scrollable");
-  }
-  menu.style.left = `${Math.floor(rect.right) - 2}px`;
-  menu.style.top = `${Math.floor(rect.top) - 3}px`;
+function measureMenu(items: MenuItem[]) {
+  const menu = buildMenu(items, { inertActions: true });
+  menu.classList.add("measure-menu");
   document.body.append(menu);
+  const rect = menu.getBoundingClientRect();
+  menu.remove();
+
+  return {
+    width: Math.max(1, Math.ceil(rect.width)),
+    height: Math.max(1, Math.ceil(rect.height))
+  };
 }
 
 function installGlobalMenuListeners() {
@@ -295,7 +314,9 @@ function installGlobalMenuListeners() {
   document.addEventListener("pointerdown", handleGlobalPointerDown, true);
   document.addEventListener("keydown", handleGlobalKeyDown, true);
   window.addEventListener("blur", () => {
-    void closeMenu().catch(console.error);
+    if (isPopupWindow) {
+      void closeMenu().catch(console.error);
+    }
   });
   globalMenuListenersInstalled = true;
 }
@@ -305,14 +326,17 @@ function handleGlobalPointerDown(event: PointerEvent) {
   if (!(target instanceof Node)) {
     return;
   }
-  if (openButton && !openButton.contains(target)) {
+  if (!isPopupWindow && openButton && !openButton.contains(target)) {
     console.log("outside-click close: main window pointerdown outside active menu button");
+    void closeMenu({ pointerEvent: event }).catch(console.error);
+  }
+  if (isPopupWindow && target instanceof Element && !target.closest(".menu")) {
     void closeMenu({ pointerEvent: event }).catch(console.error);
   }
 }
 
 function handleGlobalKeyDown(event: KeyboardEvent) {
-  if (event.key === "Escape" && openButton) {
+  if (event.key === "Escape" && (isPopupWindow || openButton)) {
     event.preventDefault();
     void closeMenu().catch(console.error);
   }
@@ -322,6 +346,7 @@ async function closeMenu(options: { pointerEvent?: PointerEvent } = {}) {
   document.querySelectorAll<HTMLElement>("body > .menu").forEach((menu) => menu.remove());
   clearOpenMenuState();
   clearInteractionState(options.pointerEvent);
+  await invoke("close_menu_popup");
 }
 
 function clearOpenMenuState() {
