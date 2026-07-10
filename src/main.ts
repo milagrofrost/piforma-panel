@@ -68,6 +68,29 @@ const menuStorageKey = "piforma-panel-open-menu";
 
 void init();
 
+function serializeLogValue(value: unknown) {
+  if (value instanceof Error) {
+    return `${value.name}: ${value.message}`;
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+async function frontendLog(message: string) {
+  console.log(message);
+  try {
+    await invoke("frontend_log", { message });
+  } catch (error) {
+    console.error("frontend_log failed", error);
+  }
+}
+
 async function init() {
   const params = new URLSearchParams(window.location.search);
   isPopupWindow = params.get("popup") === "menu";
@@ -83,6 +106,7 @@ async function init() {
   installGlobalMenuListeners();
 
   if (isPopupWindow) {
+    void frontendLog("popup mode init");
     document.body.classList.add("popup-window");
     renderPopupMenu();
     return;
@@ -212,6 +236,7 @@ function shortcut(label: string, action: string): MenuItem {
 }
 
 async function toggleMenu(button: HTMLElement, items: MenuItem[]) {
+  await frontendLog("toggleMenu start");
   if (openButton === button) {
     await closeMenu();
     return;
@@ -221,16 +246,30 @@ async function toggleMenu(button: HTMLElement, items: MenuItem[]) {
   const rect = button.getBoundingClientRect();
   const menu = measureMenu(items);
   const label = button.getAttribute("aria-label") ?? button.textContent ?? "Menu";
+  const x = config.bar.x + Math.floor(rect.left);
+  const y = config.bar.y + config.bar.height;
+  await frontendLog(`menu label=${label}`);
+  await frontendLog(`menu item count=${items.length}`);
+  await frontendLog(`measured menu width=${menu.width}, height=${menu.height}`);
+  await frontendLog(`computed popup x=${x}, y=${y}`);
   localStorage.setItem(menuStorageKey, JSON.stringify({ label, items } satisfies StoredMenu));
   openButton = button;
   button.classList.add("is-open");
-  await invoke("open_menu_popup", {
-    label,
-    x: config.bar.x + Math.floor(rect.left),
-    y: config.bar.y + config.bar.height,
-    width: menu.width,
-    height: menu.height
-  });
+  try {
+    await frontendLog("before invoking open_menu_popup");
+    await invoke("open_menu_popup", {
+      label,
+      x,
+      y,
+      width: menu.width,
+      height: menu.height
+    });
+    await frontendLog("after successful open_menu_popup");
+  } catch (error) {
+    await frontendLog(`open_menu_popup error: ${serializeLogValue(error)}`);
+    openButton = null;
+    button.classList.remove("is-open");
+  }
 }
 
 function renderPopupMenu() {
@@ -242,18 +281,23 @@ function renderPopupMenu() {
 
   const menu = buildMenu(stored.items);
   appRoot.replaceChildren(menu);
+  void frontendLog(`popup rendered item count=${stored.items.length}`);
 }
 
 function readStoredMenu() {
   const raw = localStorage.getItem(menuStorageKey);
   if (!raw) {
+    void frontendLog("popup readStoredMenu failure: missing stored menu");
     return null;
   }
 
   try {
-    return JSON.parse(raw) as StoredMenu;
+    const stored = JSON.parse(raw) as StoredMenu;
+    void frontendLog(`popup readStoredMenu success: label=${stored.label}, items=${stored.items.length}`);
+    return stored;
   } catch (error) {
     console.error(error);
+    void frontendLog(`popup readStoredMenu failure: ${serializeLogValue(error)}`);
     return null;
   }
 }
@@ -315,6 +359,7 @@ function installGlobalMenuListeners() {
   document.addEventListener("keydown", handleGlobalKeyDown, true);
   window.addEventListener("blur", () => {
     if (isPopupWindow) {
+      void frontendLog("popup blur");
       void closeMenu().catch(console.error);
     }
   });
@@ -343,10 +388,12 @@ function handleGlobalKeyDown(event: KeyboardEvent) {
 }
 
 async function closeMenu(options: { pointerEvent?: PointerEvent } = {}) {
+  await frontendLog("closeMenu start");
   document.querySelectorAll<HTMLElement>("body > .menu").forEach((menu) => menu.remove());
   clearOpenMenuState();
   clearInteractionState(options.pointerEvent);
   await invoke("close_menu_popup");
+  await frontendLog("closeMenu end");
 }
 
 function clearOpenMenuState() {

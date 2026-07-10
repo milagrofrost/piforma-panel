@@ -138,6 +138,7 @@ fn main() {
             get_config,
             get_apple_logo_data_url,
             initialize_main_window,
+            frontend_log,
             open_menu_popup,
             close_menu_popup,
             select_menu_action,
@@ -275,6 +276,11 @@ fn initialize_main_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn frontend_log(message: String) {
+    println!("frontend: {message}");
+}
+
+#[tauri::command]
 async fn open_menu_popup(
     app: tauri::AppHandle,
     label: String,
@@ -283,8 +289,11 @@ async fn open_menu_popup(
     width: u32,
     height: u32,
 ) -> Result<(), String> {
+    println!("open_menu_popup start: label={label}, x={x}, y={y}, width={width}, height={height}");
     close_menu_popup_window(&app);
-    println!("primary menu popup created: label={label}, x={x}, y={y}, width={width}, height={height}");
+    println!(
+        "primary menu popup created: label={label}, x={x}, y={y}, width={width}, height={height}"
+    );
 
     let popup = WebviewWindowBuilder::new(
         &app,
