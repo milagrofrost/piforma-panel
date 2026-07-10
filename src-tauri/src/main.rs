@@ -258,7 +258,7 @@ fn configure_main_window(
             height: config.bar.height,
         }))
         .map_err(|err| err.to_string())?;
-    apply_tight_gtk_size(window, config.bar.width, config.bar.height, "main")?;
+    apply_main_gtk_size(window, config.bar.width, config.bar.height)?;
     window
         .set_position(tauri::Position::Physical(tauri::PhysicalPosition {
             x: config.bar.x,
@@ -270,11 +270,10 @@ fn configure_main_window(
     window.set_resizable(false).map_err(|err| err.to_string())
 }
 
-fn apply_tight_gtk_size(
+fn apply_main_gtk_size(
     window: &tauri::WebviewWindow,
     width: u32,
     height: u32,
-    label: &str,
 ) -> Result<(), String> {
     let width_i32 = i32::try_from(width).map_err(|err| err.to_string())?;
     let height_i32 = i32::try_from(height).map_err(|err| err.to_string())?;
@@ -290,7 +289,38 @@ fn apply_tight_gtk_size(
         }
     }
 
-    println!("gtk tight size applied: label={label}, width={width}, height={height}");
+    println!("gtk tight size applied: label=main, width={width}, height={height}");
+    Ok(())
+}
+
+fn apply_popup_gtk_size(
+    window: &tauri::WebviewWindow,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    let width_i32 = i32::try_from(width).map_err(|err| err.to_string())?;
+    let height_i32 = i32::try_from(height).map_err(|err| err.to_string())?;
+    let gtk_window = window.gtk_window().map_err(|err| err.to_string())?;
+
+    gtk_window.set_size_request(-1, -1);
+    gtk_window.set_default_size(width_i32, height_i32);
+
+    if let Ok(vbox) = window.default_vbox() {
+        vbox.set_size_request(-1, -1);
+        for child in vbox.children() {
+            child.set_size_request(-1, -1);
+        }
+
+        vbox.set_size_request(width_i32, height_i32);
+        for child in vbox.children() {
+            child.set_size_request(width_i32, height_i32);
+        }
+    }
+
+    gtk_window.set_size_request(width_i32, height_i32);
+    gtk_window.resize(width_i32, height_i32);
+
+    println!("gtk popup size applied: width={width}, height={height}");
     Ok(())
 }
 
@@ -374,20 +404,15 @@ async fn open_menu_popup(
         .set_max_size(Option::<tauri::Size>::None)
         .map_err(|err| err.to_string())?;
     popup
-        .set_size(tauri::Size::Physical(tauri::PhysicalSize { width, height }))
-        .map_err(|err| err.to_string())?;
-    apply_tight_gtk_size(&popup, width, height, PRIMARY_MENU_POPUP_LABEL)?;
-    popup
         .set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }))
         .map_err(|err| err.to_string())?;
     println!(
-        "primary menu popup updated: label={label}, x={x}, y={y}, width={width}, height={height}"
+        "primary menu popup requested before render: label={label}, x={x}, y={y}, width={width}, height={height}"
     );
-    log_popup_actual_size(&popup, "updated");
     popup
         .emit(
             "render-menu-popup",
-            serde_json::json!({ "label": label, "items": items }),
+            serde_json::json!({ "label": label, "items": items, "width": width, "height": height }),
         )
         .map_err(|err| err.to_string())?;
 
@@ -401,13 +426,26 @@ fn close_menu_popup(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn menu_popup_rendered(app: tauri::AppHandle, label: String) -> Result<(), String> {
+fn menu_popup_rendered(
+    app: tauri::AppHandle,
+    label: String,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(PRIMARY_MENU_POPUP_LABEL) {
-        println!("primary menu popup rendered: label={label}");
+        println!(
+            "primary menu popup requested after render: label={label}, width={width}, height={height}"
+        );
+        resize_menu_popup_window(&window, width, height)?;
         window.show().map_err(|err| err.to_string())?;
         window.set_focus().map_err(|err| err.to_string())?;
+        window
+            .set_size(tauri::Size::Physical(tauri::PhysicalSize { width, height }))
+            .map_err(|err| err.to_string())?;
+        apply_popup_gtk_size(&window, width, height)?;
+        window.set_resizable(false).map_err(|err| err.to_string())?;
         println!("primary menu popup shown: label={label}");
-        log_popup_actual_size(&window, "shown");
+        log_popup_actual_size(&window, "final", width, height);
     }
     Ok(())
 }
@@ -458,7 +496,7 @@ fn hide_menu_popup_window(app: &tauri::AppHandle, emit_closed: bool) {
             eprintln!("failed to hide primary menu popup: {err}");
         } else {
             println!("primary menu popup hidden");
-            log_popup_actual_size(&window, "hidden");
+            log_popup_actual_size_unchecked(&window, "hidden");
         }
     }
     if emit_closed {
@@ -468,9 +506,46 @@ fn hide_menu_popup_window(app: &tauri::AppHandle, emit_closed: bool) {
     }
 }
 
-fn log_popup_actual_size(window: &tauri::WebviewWindow, phase: &str) {
+fn resize_menu_popup_window(
+    window: &tauri::WebviewWindow,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    window.set_resizable(true).map_err(|err| err.to_string())?;
+    window
+        .set_min_size(Some(tauri::Size::Physical(tauri::PhysicalSize {
+            width: MAIN_WINDOW_MIN_WIDTH,
+            height: MAIN_WINDOW_MIN_HEIGHT,
+        })))
+        .map_err(|err| err.to_string())?;
+    window
+        .set_max_size(Option::<tauri::Size>::None)
+        .map_err(|err| err.to_string())?;
+    window
+        .set_size(tauri::Size::Physical(tauri::PhysicalSize { width, height }))
+        .map_err(|err| err.to_string())?;
+    apply_popup_gtk_size(window, width, height)
+}
+
+fn log_popup_actual_size(window: &tauri::WebviewWindow, phase: &str, width: u32, height: u32) {
+    let inner_size = window.inner_size();
+    let differs = inner_size
+        .as_ref()
+        .map(|size| size.width != width || size.height != height)
+        .unwrap_or(true);
     println!(
-        "primary menu popup {phase}: actual inner_size={}; actual outer_size={}",
+        "primary menu popup {phase}: requested={}x{}, actual inner_size={}, actual outer_size={}, differs_from_requested={}",
+        width,
+        height,
+        format_size_result(inner_size),
+        format_size_result(window.outer_size()),
+        differs
+    );
+}
+
+fn log_popup_actual_size_unchecked(window: &tauri::WebviewWindow, phase: &str) {
+    println!(
+        "primary menu popup {phase}: actual inner_size={}, actual outer_size={}",
         format_size_result(window.inner_size()),
         format_size_result(window.outer_size())
     );

@@ -57,6 +57,8 @@ type MenuAction =
 type RenderMenuPopupPayload = {
   label: string;
   items: MenuItem[];
+  width: number;
+  height: number;
 };
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -307,7 +309,11 @@ async function initializePopupWindow() {
   await listen<RenderMenuPopupPayload>("render-menu-popup", async (event) => {
     cancelPopupBlurClose();
     renderPopupMenu(event.payload);
-    await invoke("menu_popup_rendered", { label: event.payload.label });
+    await invoke("menu_popup_rendered", {
+      label: event.payload.label,
+      width: event.payload.width,
+      height: event.payload.height
+    });
   });
   void frontendLog("popup waiting for render-menu-popup");
 }
@@ -315,7 +321,9 @@ async function initializePopupWindow() {
 function renderPopupMenu(payload: RenderMenuPopupPayload) {
   const menu = buildMenu(payload.items);
   appRoot.replaceChildren(menu);
-  void frontendLog(`popup rendered label=${payload.label}, item count=${payload.items.length}`);
+  void frontendLog(
+    `popup rendered label=${payload.label}, item count=${payload.items.length}, width=${payload.width}, height=${payload.height}`
+  );
 }
 
 function buildMenu(items: MenuItem[], options: { inertActions?: boolean } = {}) {
