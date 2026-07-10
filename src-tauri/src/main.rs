@@ -113,6 +113,14 @@ struct SelectedMenuAction {
     action: serde_json::Value,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct BuildInfo {
+    commit: String,
+    branch: String,
+    built_at: String,
+    dirty: bool,
+}
+
 #[derive(Debug, Clone, Copy)]
 enum SystemAction {
     SleepDisplay,
@@ -125,6 +133,7 @@ enum SystemAction {
 }
 
 fn main() {
+    print_build_info();
     tauri::Builder::default()
         .setup(|app| {
             let config = ensure_config().map_err(|err| err.to_string())?;
@@ -135,6 +144,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_build_info,
             get_config,
             get_apple_logo_data_url,
             initialize_main_window,
@@ -152,6 +162,29 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running piforma-panel");
+}
+
+fn build_info() -> BuildInfo {
+    BuildInfo {
+        commit: option_env!("PIFORMA_BUILD_COMMIT")
+            .unwrap_or("unknown")
+            .to_string(),
+        branch: option_env!("PIFORMA_BUILD_BRANCH")
+            .unwrap_or("unknown")
+            .to_string(),
+        built_at: option_env!("PIFORMA_BUILD_BUILT_AT")
+            .unwrap_or("unknown")
+            .to_string(),
+        dirty: option_env!("PIFORMA_BUILD_DIRTY").unwrap_or("false") == "true",
+    }
+}
+
+fn print_build_info() {
+    let info = build_info();
+    println!(
+        "PiForma Panel build info: commit={}, branch={}, dirty={}, built_at={}",
+        info.commit, info.branch, info.dirty, info.built_at
+    );
 }
 
 fn config_path() -> Result<PathBuf, String> {
@@ -252,6 +285,11 @@ fn print_config_diagnostics(config: &PanelConfig) -> Result<(), String> {
         config.bar.width, config.bar.height, config.bar.x, config.bar.y
     );
     Ok(())
+}
+
+#[tauri::command]
+fn get_build_info() -> BuildInfo {
+    build_info()
 }
 
 #[tauri::command]
