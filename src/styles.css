@@ -57,6 +57,7 @@ button {
   border-top-right-radius: var(--radius-tr);
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
+  pointer-events: auto;
 }
 
 .menu-left,
@@ -64,6 +65,7 @@ button {
   height: 18px;
   display: flex;
   align-items: center;
+  pointer-events: auto;
 }
 
 .menu-left {
@@ -89,6 +91,7 @@ button {
   border-radius: 0;
   line-height: 18px;
   white-space: nowrap;
+  pointer-events: auto;
 }
 
 .apple-button {

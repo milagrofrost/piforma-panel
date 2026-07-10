@@ -86,8 +86,10 @@ async function frontendLog(message: string) {
   console.log(message);
   try {
     await invoke("frontend_log", { message });
+    return true;
   } catch (error) {
     console.error("frontend_log failed", error);
+    return false;
   }
 }
 
@@ -95,6 +97,12 @@ async function init() {
   const params = new URLSearchParams(window.location.search);
   isPopupWindow = params.get("popup") === "menu";
   config = await invoke<PanelConfig>("get_config");
+  const frontendLogAvailable = await frontendLog("frontend init start");
+  if (!frontendLogAvailable) {
+    console.error("frontend init start failed to reach Rust frontend_log");
+    document.title = "PiForma Panel frontend_log failed";
+    document.documentElement.dataset.debug = "frontend-log-failed";
+  }
   document.documentElement.style.setProperty("--bar-width", `${config.bar.width}px`);
   document.documentElement.style.setProperty("--bar-height", `${config.bar.height}px`);
   document.documentElement.style.setProperty("--radius-tl", `${config.bar.radius_top_left}px`);
@@ -135,6 +143,7 @@ type StoredMenu = {
 };
 
 function renderPanel(logo: string | null, applications: DesktopApp[]) {
+  void frontendLog("frontend renderPanel start");
   const bar = document.createElement("div");
   bar.className = "menu-bar";
 
@@ -155,6 +164,7 @@ function renderPanel(logo: string | null, applications: DesktopApp[]) {
     appleButton.classList.add("apple-fallback");
   }
   appleButton.addEventListener("click", () => {
+    void frontendLog("Apple handler start before toggleMenu");
     void toggleMenu(appleButton, [
       { kind: "item", label: "About This PiForma", action: { kind: "placeholder", message: "About This PiForma" } },
       { kind: "separator" },
@@ -163,6 +173,7 @@ function renderPanel(logo: string | null, applications: DesktopApp[]) {
       { kind: "item", label: "Calculator", action: launchNamedAction(applications, "calculator") }
     ]).catch(console.error);
   });
+  addButtonEventDiagnostics(appleButton, "Apple");
   left.append(appleButton);
 
   if (config.menus.show_file) {
@@ -213,14 +224,18 @@ function renderPanel(logo: string | null, applications: DesktopApp[]) {
 
   bar.append(left, right);
   appRoot.replaceChildren(bar);
+  logRenderedMenuDiagnostics();
 }
 
 function menuTitle(label: string, items: MenuItem[]) {
+  void frontendLog(`menuTitle created: ${label}`);
   const button = makeMenuButton("menu-title");
   button.textContent = label;
   button.addEventListener("click", () => {
+    void frontendLog(`menuTitle click handler start: ${label}`);
     void toggleMenu(button, items).catch(console.error);
   });
+  addButtonEventDiagnostics(button, label);
   return button;
 }
 
@@ -236,6 +251,7 @@ function shortcut(label: string, action: string): MenuItem {
 }
 
 async function toggleMenu(button: HTMLElement, items: MenuItem[]) {
+  console.log("toggleMenu start");
   await frontendLog("toggleMenu start");
   if (openButton === button) {
     await closeMenu();
@@ -355,6 +371,7 @@ function installGlobalMenuListeners() {
     return;
   }
 
+  installEventPathDiagnostics();
   document.addEventListener("pointerdown", handleGlobalPointerDown, true);
   document.addEventListener("keydown", handleGlobalKeyDown, true);
   window.addEventListener("blur", () => {
@@ -364,6 +381,57 @@ function installGlobalMenuListeners() {
     }
   });
   globalMenuListenersInstalled = true;
+}
+
+function installEventPathDiagnostics() {
+  for (const eventType of ["pointerdown", "mousedown", "mouseup", "click"]) {
+    document.addEventListener(
+      eventType,
+      (event) => {
+        if (!(event instanceof MouseEvent)) {
+          return;
+        }
+        void frontendLog(`document event: ${formatMouseEvent(event)}`);
+      },
+      true
+    );
+  }
+}
+
+function addButtonEventDiagnostics(button: HTMLElement, label: string) {
+  for (const eventType of ["pointerdown", "mousedown", "mouseup", "click"]) {
+    button.addEventListener(eventType, () => {
+      void frontendLog(`button event: ${label} ${eventType}`);
+    });
+  }
+}
+
+function formatMouseEvent(event: MouseEvent) {
+  const target = event.target;
+  const element = target instanceof Element ? target : null;
+  const tagName = element?.tagName ?? "unknown";
+  const className = element ? String(element.className) : "";
+  const text = element?.textContent?.trim().replace(/\s+/g, " ").slice(0, 40) ?? "";
+  return `${event.type} target=${tagName} class=${className} text="${text}" x=${event.clientX} y=${event.clientY}`;
+}
+
+function logRenderedMenuDiagnostics() {
+  const menuTitles = document.querySelectorAll<HTMLElement>(".menu-title");
+  const appleButton = document.querySelector<HTMLElement>(".apple-button");
+  void frontendLog(`rendered menu-title count=${menuTitles.length}`);
+  void frontendLog(`rendered apple button exists=${appleButton !== null}`);
+
+  const buttons = document.querySelectorAll<HTMLElement>(".apple-button, .menu-title");
+  buttons.forEach((button, index) => {
+    const label = button.getAttribute("aria-label") ?? button.textContent?.trim() ?? "";
+    const text = button.textContent?.trim().replace(/\s+/g, " ") ?? "";
+    const style = window.getComputedStyle(button);
+    const rect = button.getBoundingClientRect();
+    void frontendLog(`menu button ${index}: label=${label}, text="${text}"`);
+    void frontendLog(
+      `menu button ${index}: pointer-events=${style.pointerEvents}, rect=x:${Math.round(rect.x)}, y:${Math.round(rect.y)}, width:${Math.round(rect.width)}, height:${Math.round(rect.height)}`
+    );
+  });
 }
 
 function handleGlobalPointerDown(event: PointerEvent) {
