@@ -54,6 +54,19 @@ body.popup-window #app {
   line-height: 0;
 }
 
+html:has(> body.flyout-window),
+html:has(> body.flyout-window) body,
+html:has(> body.flyout-window) #app,
+body.flyout-window,
+body.flyout-window #app {
+  width: max-content;
+  min-width: 0;
+  max-width: none;
+  height: max-content;
+  min-height: 0;
+  max-height: none;
+}
+
 button {
   font: inherit;
 }
@@ -167,6 +180,12 @@ button {
   max-width: none;
 }
 
+.flyout-window .menu {
+  position: relative;
+  display: block;
+  overflow-x: hidden;
+}
+
 .measure-menu {
   position: fixed;
   top: 0;
@@ -191,6 +210,22 @@ button {
   white-space: nowrap;
 }
 
+.menu-item.has-submenu {
+  padding-right: 30px;
+}
+
+.submenu-arrow {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  width: 0;
+  height: 0;
+  transform: translateY(-50%);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid currentColor;
+}
+
 .menu-item:disabled {
   color: #777;
 }
@@ -210,4 +245,23 @@ button {
 .scrollable {
   max-height: var(--menu-max-height);
   overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.scrollable .menu-item {
+  width: 100%;
+}
+
+.scrollable::-webkit-scrollbar {
+  width: 10px;
+}
+
+.scrollable::-webkit-scrollbar-track {
+  background: #fff;
+  border-left: 1px solid #000;
+}
+
+.scrollable::-webkit-scrollbar-thumb {
+  background: #d0d0d0;
+  border: 1px solid #000;
 }
