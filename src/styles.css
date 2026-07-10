@@ -30,11 +30,28 @@ body {
   font-size: var(--panel-font-size);
 }
 
+html:has(> body.popup-window),
+html:has(> body.popup-window) body,
+html:has(> body.popup-window) #app,
 body.popup-window,
 body.popup-window #app {
-  width: 100vw;
-  height: 100vh;
+  width: max-content;
+  min-width: 0;
+  max-width: none;
+  height: max-content;
+  min-height: 0;
+  max-height: none;
+  margin: 0;
   overflow: hidden;
+}
+
+body.popup-window {
+  display: inline-block;
+}
+
+body.popup-window #app {
+  display: inline-block;
+  line-height: 0;
 }
 
 button {
@@ -144,6 +161,10 @@ button {
   position: relative;
   top: 0;
   left: 0;
+  display: inline-block;
+  width: max-content;
+  min-width: 184px;
+  max-width: none;
 }
 
 .measure-menu {
@@ -151,6 +172,8 @@ button {
   top: 0;
   left: -10000px;
   visibility: hidden;
+  display: inline-block;
+  width: max-content;
 }
 
 .menu-item {
