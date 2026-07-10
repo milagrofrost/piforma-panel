@@ -10,6 +10,7 @@ use std::{
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 const PRIMARY_MENU_POPUP_LABEL: &str = "menu-popup";
+const FLYOUT_MENU_POPUP_LABEL: &str = "menu-flyout";
 const MAIN_WINDOW_MIN_WIDTH: u32 = 1;
 const MAIN_WINDOW_MIN_HEIGHT: u32 = 1;
 
@@ -143,6 +144,7 @@ fn main() {
                 configure_main_window(&window, &config, "setup")?;
             }
             ensure_menu_popup_window(app.handle())?;
+            ensure_menu_flyout_window(app.handle())?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -152,8 +154,12 @@ fn main() {
             initialize_main_window,
             frontend_log,
             open_menu_popup,
+            open_menu_flyout,
             close_menu_popup,
+            close_menu_flyout,
             menu_popup_rendered,
+            menu_flyout_rendered,
+            menu_flyout_pointer_entered,
             select_menu_action,
             list_applications,
             list_control_panels,
@@ -412,7 +418,46 @@ async fn open_menu_popup(
     popup
         .emit(
             "render-menu-popup",
-            serde_json::json!({ "label": label, "items": items, "width": width, "height": height }),
+            serde_json::json!({ "label": label, "items": items, "width": width, "height": height, "x": x, "y": y }),
+        )
+        .map_err(|err| err.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn open_menu_flyout(
+    app: tauri::AppHandle,
+    label: String,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    items: serde_json::Value,
+) -> Result<(), String> {
+    let item_count = items.as_array().map_or(0, Vec::len);
+    println!(
+        "flyout requested: label={label}, x={x}, y={y}, width={width}, height={height}, item_count={item_count}"
+    );
+    let flyout = ensure_menu_flyout_window(&app)?;
+
+    flyout.hide().map_err(|err| err.to_string())?;
+    flyout
+        .set_min_size(Some(tauri::Size::Physical(tauri::PhysicalSize {
+            width: MAIN_WINDOW_MIN_WIDTH,
+            height: MAIN_WINDOW_MIN_HEIGHT,
+        })))
+        .map_err(|err| err.to_string())?;
+    flyout
+        .set_max_size(Option::<tauri::Size>::None)
+        .map_err(|err| err.to_string())?;
+    flyout
+        .set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }))
+        .map_err(|err| err.to_string())?;
+    flyout
+        .emit(
+            "render-menu-flyout",
+            serde_json::json!({ "label": label, "items": items, "width": width, "height": height, "x": x, "y": y }),
         )
         .map_err(|err| err.to_string())?;
 
@@ -422,6 +467,12 @@ async fn open_menu_popup(
 #[tauri::command]
 fn close_menu_popup(app: tauri::AppHandle) -> Result<(), String> {
     hide_menu_popup_window(&app, true);
+    Ok(())
+}
+
+#[tauri::command]
+fn close_menu_flyout(app: tauri::AppHandle) -> Result<(), String> {
+    hide_menu_flyout_window(&app);
     Ok(())
 }
 
@@ -445,9 +496,41 @@ fn menu_popup_rendered(
         apply_popup_gtk_size(&window, width, height)?;
         window.set_resizable(false).map_err(|err| err.to_string())?;
         println!("primary menu popup shown: label={label}");
-        log_popup_actual_size(&window, "final", width, height);
+        log_popup_actual_size(&window, PRIMARY_MENU_POPUP_LABEL, "final", width, height);
     }
     Ok(())
+}
+
+#[tauri::command]
+fn menu_flyout_rendered(
+    app: tauri::AppHandle,
+    label: String,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(FLYOUT_MENU_POPUP_LABEL) {
+        println!("flyout rendered: label={label}, width={width}, height={height}");
+        resize_menu_popup_window(&window, width, height)?;
+        window.show().map_err(|err| err.to_string())?;
+        window
+            .set_size(tauri::Size::Physical(tauri::PhysicalSize { width, height }))
+            .map_err(|err| err.to_string())?;
+        apply_popup_gtk_size(&window, width, height)?;
+        window.set_resizable(false).map_err(|err| err.to_string())?;
+        if let Err(err) = app.emit("menu-flyout-rendered", ()) {
+            eprintln!("failed to emit menu-flyout-rendered: {err}");
+        }
+        println!("flyout shown: label={label}, width={width}, height={height}");
+        log_popup_actual_size(&window, FLYOUT_MENU_POPUP_LABEL, "final", width, height);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn menu_flyout_pointer_entered(app: tauri::AppHandle) {
+    if let Err(err) = app.emit("menu-flyout-entered", ()) {
+        eprintln!("failed to emit menu-flyout-entered: {err}");
+    }
 }
 
 #[tauri::command]
@@ -457,51 +540,93 @@ fn select_menu_action(
     action: serde_json::Value,
 ) -> Result<(), String> {
     println!("selected menu action: {label}");
+    if action
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|kind| kind == "launch_app")
+    {
+        println!("selected flyout application: {label}");
+    }
     hide_menu_popup_window(&app, true);
     app.emit("menu-action-selected", SelectedMenuAction { label, action })
         .map_err(|err| err.to_string())
 }
 
 fn ensure_menu_popup_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
-    if let Some(window) = app.get_webview_window(PRIMARY_MENU_POPUP_LABEL) {
+    ensure_popup_window(
+        app,
+        PRIMARY_MENU_POPUP_LABEL,
+        "index.html?popup=menu",
+        "PiForma Menu",
+    )
+}
+
+fn ensure_menu_flyout_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
+    ensure_popup_window(
+        app,
+        FLYOUT_MENU_POPUP_LABEL,
+        "index.html?popup=flyout",
+        "PiForma Menu Flyout",
+    )
+}
+
+fn ensure_popup_window(
+    app: &tauri::AppHandle,
+    label: &'static str,
+    url: &str,
+    title: &str,
+) -> Result<tauri::WebviewWindow, String> {
+    if let Some(window) = app.get_webview_window(label) {
         return Ok(window);
     }
 
-    let popup = WebviewWindowBuilder::new(
-        app,
-        PRIMARY_MENU_POPUP_LABEL,
-        WebviewUrl::App("index.html?popup=menu".into()),
-    )
-    .title("PiForma Menu")
-    .inner_size(1.0, 1.0)
-    .position(0.0, 0.0)
-    .resizable(false)
-    .fullscreen(false)
-    .decorations(false)
-    .transparent(true)
-    .shadow(false)
-    .skip_taskbar(true)
-    .focused(false)
-    .visible(false)
-    .build()
-    .map_err(|err| err.to_string())?;
+    let popup = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
+        .title(title)
+        .inner_size(1.0, 1.0)
+        .position(0.0, 0.0)
+        .resizable(false)
+        .fullscreen(false)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .skip_taskbar(true)
+        .focused(false)
+        .visible(false)
+        .build()
+        .map_err(|err| err.to_string())?;
 
-    println!("primary menu popup created once hidden");
+    if label == FLYOUT_MENU_POPUP_LABEL {
+        println!("flyout popup created once hidden");
+    } else {
+        println!("primary menu popup created once hidden");
+    }
     Ok(popup)
 }
 
 fn hide_menu_popup_window(app: &tauri::AppHandle, emit_closed: bool) {
+    hide_menu_flyout_window(app);
     if let Some(window) = app.get_webview_window(PRIMARY_MENU_POPUP_LABEL) {
         if let Err(err) = window.hide() {
             eprintln!("failed to hide primary menu popup: {err}");
         } else {
             println!("primary menu popup hidden");
-            log_popup_actual_size_unchecked(&window, "hidden");
+            log_popup_actual_size_unchecked(&window, PRIMARY_MENU_POPUP_LABEL, "hidden");
         }
     }
     if emit_closed {
         if let Err(err) = app.emit("menu-popup-closed", ()) {
             eprintln!("failed to emit menu-popup-closed: {err}");
+        }
+    }
+}
+
+fn hide_menu_flyout_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window(FLYOUT_MENU_POPUP_LABEL) {
+        if let Err(err) = window.hide() {
+            eprintln!("failed to hide flyout menu popup: {err}");
+        } else {
+            println!("flyout hidden");
+            log_popup_actual_size_unchecked(&window, FLYOUT_MENU_POPUP_LABEL, "hidden");
         }
     }
 }
@@ -527,14 +652,20 @@ fn resize_menu_popup_window(
     apply_popup_gtk_size(window, width, height)
 }
 
-fn log_popup_actual_size(window: &tauri::WebviewWindow, phase: &str, width: u32, height: u32) {
+fn log_popup_actual_size(
+    window: &tauri::WebviewWindow,
+    label: &str,
+    phase: &str,
+    width: u32,
+    height: u32,
+) {
     let inner_size = window.inner_size();
     let differs = inner_size
         .as_ref()
         .map(|size| size.width != width || size.height != height)
         .unwrap_or(true);
     println!(
-        "primary menu popup {phase}: requested={}x{}, actual inner_size={}, actual outer_size={}, differs_from_requested={}",
+        "{label} {phase}: requested={}x{}, actual inner_size={}, actual outer_size={}, differs_from_requested={}",
         width,
         height,
         format_size_result(inner_size),
@@ -543,9 +674,9 @@ fn log_popup_actual_size(window: &tauri::WebviewWindow, phase: &str, width: u32,
     );
 }
 
-fn log_popup_actual_size_unchecked(window: &tauri::WebviewWindow, phase: &str) {
+fn log_popup_actual_size_unchecked(window: &tauri::WebviewWindow, label: &str, phase: &str) {
     println!(
-        "primary menu popup {phase}: actual inner_size={}, actual outer_size={}",
+        "{label} {phase}: actual inner_size={}, actual outer_size={}",
         format_size_result(window.inner_size()),
         format_size_result(window.outer_size())
     );
@@ -635,7 +766,11 @@ fn send_shortcut(action: String) -> Result<(), String> {
         _ => return Err(format!("unknown shortcut action: {action}")),
     };
 
-    spawn_with_fallbacks(&[vec!["xdotool".to_string(), "key".to_string(), key.to_string()]])
+    spawn_with_fallbacks(&[vec![
+        "xdotool".to_string(),
+        "key".to_string(),
+        key.to_string(),
+    ]])
 }
 
 #[tauri::command]
@@ -751,7 +886,10 @@ fn parse_desktop_file(path: &Path, config: &PanelConfig) -> Result<Option<Deskto
         }
     }
 
-    if values.get("Type").is_some_and(|value| value != "Application") {
+    if values
+        .get("Type")
+        .is_some_and(|value| value != "Application")
+    {
         return Ok(None);
     }
     if parse_bool(values.get("Hidden")) {

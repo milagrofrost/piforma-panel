@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default permissions for the PiForma panel window",
-  "windows": ["main", "menu-popup"],
+  "windows": ["main", "menu-popup", "menu-flyout"],
   "permissions": [
     "core:default",
     "core:app:deny-default-window-icon",

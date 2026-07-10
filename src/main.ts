@@ -43,6 +43,7 @@ type DesktopApp = {
 
 type MenuItem =
   | { kind: "item"; label: string; action: MenuAction; enabled?: boolean }
+  | { kind: "submenu"; label: string; submenu: "applications" | "control_panels"; items: MenuItem[] }
   | { kind: "separator" };
 
 type MenuAction =
@@ -59,7 +60,11 @@ type RenderMenuPopupPayload = {
   items: MenuItem[];
   width: number;
   height: number;
+  x: number;
+  y: number;
 };
+
+type PopupMode = "main" | "menu" | "flyout";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -72,8 +77,11 @@ const appRoot = app;
 let config: PanelConfig;
 let openButton: HTMLElement | null = null;
 let globalMenuListenersInstalled = false;
-let isPopupWindow = false;
+let popupMode: PopupMode = "main";
 let popupBlurCloseTimer: number | null = null;
+let activePrimaryPopup: { x: number; y: number; width: number; height: number } | null = null;
+let activeFlyoutSubmenu: "applications" | "control_panels" | null = null;
+let flyoutOpen = false;
 
 markFrontendLoaded();
 void init();
@@ -114,7 +122,8 @@ async function frontendLog(message: string) {
 
 async function init() {
   const params = new URLSearchParams(window.location.search);
-  isPopupWindow = params.get("popup") === "menu";
+  const popupParam = params.get("popup");
+  popupMode = popupParam === "menu" || popupParam === "flyout" ? popupParam : "main";
   config = await invoke<PanelConfig>("get_config");
   const frontendLogAvailable = await frontendLog("frontend init start");
   if (!frontendLogAvailable) {
@@ -122,8 +131,10 @@ async function init() {
     document.title = "PiForma Panel frontend_log failed";
     document.documentElement.dataset.debug = "frontend-log-failed";
   }
-  document.documentElement.style.setProperty("--bar-width", `${config.bar.width}px`);
-  document.documentElement.style.setProperty("--bar-height", `${config.bar.height}px`);
+  if (popupMode === "main") {
+    document.documentElement.style.setProperty("--bar-width", `${config.bar.width}px`);
+    document.documentElement.style.setProperty("--bar-height", `${config.bar.height}px`);
+  }
   document.documentElement.style.setProperty("--radius-tl", `${config.bar.radius_top_left}px`);
   document.documentElement.style.setProperty("--radius-tr", `${config.bar.radius_top_right}px`);
   document.documentElement.style.setProperty("--panel-font", config.bar.font_family);
@@ -132,10 +143,17 @@ async function init() {
 
   installGlobalMenuListeners();
 
-  if (isPopupWindow) {
-    void frontendLog("popup mode init");
+  if (popupMode === "menu") {
+    void frontendLog("primary popup mode init");
     document.body.classList.add("popup-window");
-    await initializePopupWindow();
+    await initializePrimaryPopupWindow();
+    return;
+  }
+
+  if (popupMode === "flyout") {
+    void frontendLog("flyout popup mode init");
+    document.body.classList.add("popup-window", "flyout-window");
+    await initializeFlyoutWindow();
     return;
   }
 
@@ -149,14 +167,17 @@ async function init() {
 
   await invoke("initialize_main_window");
   const logo = await invoke<string | null>("get_apple_logo_data_url");
-  const applications = await invoke<DesktopApp[]>("list_applications");
+  const [applications, controlPanels] = await Promise.all([
+    invoke<DesktopApp[]>("list_applications"),
+    invoke<DesktopApp[]>("list_control_panels")
+  ]);
 
-  renderPanel(logo, applications);
+  renderPanel(logo, applications, controlPanels);
   updateClock();
   window.setInterval(updateClock, 1000);
 }
 
-function renderPanel(logo: string | null, applications: DesktopApp[]) {
+function renderPanel(logo: string | null, applications: DesktopApp[], controlPanels: DesktopApp[]) {
   void frontendLog("frontend renderPanel start");
   const bar = document.createElement("div");
   bar.className = "menu-bar";
@@ -182,8 +203,13 @@ function renderPanel(logo: string | null, applications: DesktopApp[]) {
     void toggleMenu(appleButton, [
       { kind: "item", label: "About This PiForma", action: { kind: "placeholder", message: "About This PiForma" } },
       { kind: "separator" },
-      { kind: "item", label: "Applications", enabled: false, action: { kind: "placeholder", message: "Applications" } },
-      { kind: "item", label: "Control Panels", enabled: false, action: { kind: "placeholder", message: "Control Panels" } },
+      { kind: "submenu", label: "Applications", submenu: "applications", items: desktopAppsToMenuItems(applications, "(No Applications)") },
+      {
+        kind: "submenu",
+        label: "Control Panels",
+        submenu: "control_panels",
+        items: desktopAppsToMenuItems(controlPanels, "(No Control Panels)")
+      },
       { kind: "item", label: "Calculator", action: launchNamedAction(applications, "calculator") }
     ]).catch(console.error);
   });
@@ -264,6 +290,22 @@ function shortcut(label: string, action: string): MenuItem {
   return { kind: "item", label, action: { kind: "send_shortcut", action } };
 }
 
+function desktopAppsToMenuItems(apps: DesktopApp[], emptyLabel: string): MenuItem[] {
+  const sortedApps = [...apps].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  if (sortedApps.length === 0) {
+    return [{ kind: "item", label: emptyLabel, enabled: false, action: { kind: "placeholder", message: emptyLabel } }];
+  }
+  return sortedApps.map((app) => ({
+    kind: "item",
+    label: app.name,
+    action: {
+      kind: "launch_app",
+      exec: app.exec,
+      name: app.name
+    }
+  }));
+}
+
 async function toggleMenu(button: HTMLElement, items: MenuItem[]) {
   console.log("toggleMenu start");
   await frontendLog("toggleMenu start");
@@ -304,10 +346,12 @@ async function toggleMenu(button: HTMLElement, items: MenuItem[]) {
   }
 }
 
-async function initializePopupWindow() {
+async function initializePrimaryPopupWindow() {
   appRoot.replaceChildren();
   await listen<RenderMenuPopupPayload>("render-menu-popup", async (event) => {
     cancelPopupBlurClose();
+    flyoutOpen = false;
+    activeFlyoutSubmenu = null;
     renderPopupMenu(event.payload);
     await invoke("menu_popup_rendered", {
       label: event.payload.label,
@@ -315,21 +359,60 @@ async function initializePopupWindow() {
       height: event.payload.height
     });
   });
+  await listen("menu-flyout-entered", () => {
+    cancelPopupBlurClose();
+  });
+  await listen("menu-flyout-rendered", () => {
+    cancelPopupBlurClose();
+  });
   void frontendLog("popup waiting for render-menu-popup");
 }
 
 function renderPopupMenu(payload: RenderMenuPopupPayload) {
-  const menu = buildMenu(payload.items);
+  activePrimaryPopup = { x: payload.x, y: payload.y, width: payload.width, height: payload.height };
+  const menu = buildMenu(payload.items, { primaryPopup: activePrimaryPopup });
   appRoot.replaceChildren(menu);
   void frontendLog(
     `popup rendered label=${payload.label}, item count=${payload.items.length}, width=${payload.width}, height=${payload.height}`
   );
 }
 
-function buildMenu(items: MenuItem[], options: { inertActions?: boolean } = {}) {
+async function initializeFlyoutWindow() {
+  appRoot.replaceChildren();
+  await listen<RenderMenuPopupPayload>("render-menu-flyout", async (event) => {
+    cancelPopupBlurClose();
+    renderFlyoutMenu(event.payload);
+    await invoke("menu_flyout_rendered", {
+      label: event.payload.label,
+      width: event.payload.width,
+      height: event.payload.height
+    });
+  });
+  void frontendLog("flyout waiting for render-menu-flyout");
+}
+
+function renderFlyoutMenu(payload: RenderMenuPopupPayload) {
+  const menu = buildMenu(payload.items, { maxHeight: payload.height });
+  menu.addEventListener("pointerenter", () => {
+    cancelPopupBlurClose();
+    void invoke("menu_flyout_pointer_entered").catch(console.error);
+  });
+  appRoot.replaceChildren(menu);
+  void frontendLog(
+    `flyout rendered label=${payload.label}, item count=${payload.items.length}, width=${payload.width}, height=${payload.height}`
+  );
+}
+
+function buildMenu(
+  items: MenuItem[],
+  options: { inertActions?: boolean; primaryPopup?: { x: number; y: number; width: number; height: number }; maxHeight?: number } = {}
+) {
   const menu = document.createElement("div");
   menu.className = "menu";
   menu.setAttribute("role", "menu");
+  if (options.maxHeight) {
+    menu.classList.add("scrollable");
+  }
 
   for (const item of items) {
     if (item.kind === "separator") {
@@ -342,11 +425,44 @@ function buildMenu(items: MenuItem[], options: { inertActions?: boolean } = {}) 
     const row = document.createElement("button");
     row.type = "button";
     row.className = "menu-item";
+
+    if (item.kind === "submenu") {
+      row.classList.add("has-submenu");
+      row.textContent = item.label;
+      const arrow = document.createElement("span");
+      arrow.className = "submenu-arrow";
+      arrow.setAttribute("aria-hidden", "true");
+      row.append(arrow);
+      if (!options.inertActions) {
+        const openSubmenu = async () => {
+          cancelPopupBlurClose();
+          if (!options.primaryPopup || activeFlyoutSubmenu === item.submenu) {
+            return;
+          }
+          activeFlyoutSubmenu = item.submenu;
+          await openFlyout(row, item, options.primaryPopup);
+        };
+        row.addEventListener("pointerenter", () => {
+          void openSubmenu().catch(console.error);
+        });
+        row.addEventListener("click", () => {
+          void openSubmenu().catch(console.error);
+        });
+      }
+      menu.append(row);
+      continue;
+    }
+
     row.textContent = item.label;
     row.disabled = item.enabled === false;
     if (!options.inertActions) {
+      row.addEventListener("pointerenter", () => {
+        if (popupMode === "menu") {
+          void closeFlyout().catch(console.error);
+        }
+      });
       row.addEventListener("click", async () => {
-        if (isPopupWindow) {
+        if (popupMode === "menu" || popupMode === "flyout") {
           await invoke("select_menu_action", { label: item.label, action: item.action });
           return;
         }
@@ -361,8 +477,40 @@ function buildMenu(items: MenuItem[], options: { inertActions?: boolean } = {}) 
   return menu;
 }
 
-function measureMenu(items: MenuItem[]) {
-  const menu = buildMenu(items, { inertActions: true });
+async function openFlyout(
+  row: HTMLElement,
+  item: Extract<MenuItem, { kind: "submenu" }>,
+  primaryPopup: { x: number; y: number; width: number; height: number }
+) {
+  const menu = measureMenu(item.items, { maxHeight: config.applications.max_menu_height });
+  const rowRect = row.getBoundingClientRect();
+  const x = primaryPopup.x + primaryPopup.width - 1;
+  const y = primaryPopup.y + Math.floor(rowRect.top);
+  flyoutOpen = true;
+  await frontendLog(
+    `flyout open request label=${item.label}, x=${x}, y=${y}, width=${menu.width}, height=${menu.height}, item count=${item.items.length}`
+  );
+  await invoke("open_menu_flyout", {
+    label: item.label,
+    x,
+    y,
+    width: menu.width,
+    height: menu.height,
+    items: item.items
+  });
+}
+
+async function closeFlyout() {
+  if (!flyoutOpen && activeFlyoutSubmenu === null) {
+    return;
+  }
+  flyoutOpen = false;
+  activeFlyoutSubmenu = null;
+  await invoke("close_menu_flyout");
+}
+
+function measureMenu(items: MenuItem[], options: { maxHeight?: number } = {}) {
+  const menu = buildMenu(items, { inertActions: true, maxHeight: options.maxHeight });
   menu.classList.add("measure-menu");
   document.body.append(menu);
   const rect = menu.getBoundingClientRect();
@@ -370,7 +518,7 @@ function measureMenu(items: MenuItem[]) {
 
   return {
     width: Math.max(1, Math.ceil(rect.width)),
-    height: Math.max(1, Math.ceil(rect.height))
+    height: Math.max(1, Math.ceil(Math.min(rect.height, options.maxHeight ?? rect.height)))
   };
 }
 
@@ -383,12 +531,12 @@ function installGlobalMenuListeners() {
   document.addEventListener("pointerdown", handleGlobalPointerDown, true);
   document.addEventListener("keydown", handleGlobalKeyDown, true);
   window.addEventListener("blur", () => {
-    if (isPopupWindow) {
+    if (popupMode === "menu" || popupMode === "flyout") {
       void frontendLog("popup blur");
       cancelPopupBlurClose();
       popupBlurCloseTimer = window.setTimeout(() => {
         void closeMenu().catch(console.error);
-      }, 80);
+      }, flyoutOpen ? 220 : 160);
     }
   });
   globalMenuListenersInstalled = true;
@@ -466,11 +614,11 @@ function handleGlobalPointerDown(event: PointerEvent) {
   if (!(target instanceof Node)) {
     return;
   }
-  if (!isPopupWindow && openButton && !openButton.contains(target) && !isPanelMenuButton(target)) {
+  if (popupMode === "main" && openButton && !openButton.contains(target) && !isPanelMenuButton(target)) {
     console.log("outside-click close: main window pointerdown outside active menu button");
     void closeMenu({ pointerEvent: event }).catch(console.error);
   }
-  if (isPopupWindow && target instanceof Element && !target.closest(".menu")) {
+  if ((popupMode === "menu" || popupMode === "flyout") && target instanceof Element && !target.closest(".menu")) {
     void closeMenu({ pointerEvent: event }).catch(console.error);
   }
 }
@@ -480,7 +628,7 @@ function isPanelMenuButton(target: Node) {
 }
 
 function handleGlobalKeyDown(event: KeyboardEvent) {
-  if (event.key === "Escape" && (isPopupWindow || openButton)) {
+  if (event.key === "Escape" && (popupMode === "menu" || popupMode === "flyout" || openButton)) {
     event.preventDefault();
     void closeMenu().catch(console.error);
   }
@@ -489,6 +637,8 @@ function handleGlobalKeyDown(event: KeyboardEvent) {
 async function closeMenu(options: { pointerEvent?: PointerEvent } = {}) {
   await frontendLog("closeMenu start");
   document.querySelectorAll<HTMLElement>("body > .menu").forEach((menu) => menu.remove());
+  flyoutOpen = false;
+  activeFlyoutSubmenu = null;
   clearOpenMenuState();
   clearInteractionState(options.pointerEvent);
   await invoke("close_menu_popup");
