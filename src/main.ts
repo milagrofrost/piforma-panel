@@ -719,9 +719,7 @@ async function runMenuAction(action: MenuAction) {
         await invoke("run_system_action", { action: action.action, confirmed: action.confirmed });
         return;
       case "confirmed_system_action":
-        if (window.confirm(action.message)) {
-          await invoke("run_system_action", { action: action.action, confirmed: true });
-        }
+        await invoke("confirm_system_action", { action: action.action });
     }
   } catch (error) {
     await frontendLog(`menu action failed: ${serializeLogValue(error)}`);

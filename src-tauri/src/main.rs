@@ -191,6 +191,7 @@ fn main() {
             show_about_piforma,
             send_shortcut,
             run_system_action,
+            confirm_system_action,
         ])
         .run(tauri::generate_context!())
         .expect("error while running piforma-panel");
@@ -820,17 +821,7 @@ fn remember_active_window(
 
 #[tauri::command]
 fn show_about_piforma() -> Result<(), String> {
-    let info = build_info();
-    let dirty = if info.dirty { "dirty" } else { "clean" };
-    let message = format!(
-        "PiForma\nClassic Macintosh-inspired desktop environment\n\nVersion: {}\nGit commit: {}\nBranch: {}\nBuild: {}, {}",
-        env!("CARGO_PKG_VERSION"),
-        info.commit,
-        info.branch,
-        info.built_at,
-        dirty
-    );
-    show_text_dialog("About This PiForma", &message)
+    spawn_detached("about-piforma", &[])
 }
 
 #[tauri::command]
@@ -911,7 +902,7 @@ fn run_system_action(
             if !confirmed {
                 return Err("restart requires confirmation".to_string());
             }
-            spawn_short_with_fallbacks(&[
+            run_short_with_fallbacks(&[
                 vec!["systemctl".to_string(), "reboot".to_string()],
                 vec!["loginctl".to_string(), "reboot".to_string()],
             ])
@@ -920,12 +911,113 @@ fn run_system_action(
             if !confirmed {
                 return Err("shutdown requires confirmation".to_string());
             }
-            spawn_short_with_fallbacks(&[
+            run_short_with_fallbacks(&[
                 vec!["systemctl".to_string(), "poweroff".to_string()],
                 vec!["loginctl".to_string(), "poweroff".to_string()],
             ])
         }
     }
+}
+
+#[tauri::command]
+fn confirm_system_action(app: tauri::AppHandle, action: String) -> Result<(), String> {
+    hide_menu_popup_window(&app, true);
+
+    let action = parse_system_action(&action)?;
+    let confirmation = match action {
+        SystemAction::Restart => ConfirmationSpec {
+            title: "Restart",
+            text: "Are you sure you want to restart PiForma?",
+            ok_label: "Restart",
+            xmessage_buttons: "Cancel:1,Restart:0",
+        },
+        SystemAction::ShutDown => ConfirmationSpec {
+            title: "Shut Down",
+            text: "Are you sure you want to shut down PiForma?",
+            ok_label: "Shut Down",
+            xmessage_buttons: "Cancel:1,Shut Down:0",
+        },
+        _ => return Err("confirmation is only supported for restart and shut_down".to_string()),
+    };
+
+    if !confirm_with_desktop_dialog(&confirmation)? {
+        return Ok(());
+    }
+
+    match action {
+        SystemAction::Restart => run_short_with_fallbacks(&[
+            vec!["systemctl".to_string(), "reboot".to_string()],
+            vec!["loginctl".to_string(), "reboot".to_string()],
+        ]),
+        SystemAction::ShutDown => run_short_with_fallbacks(&[
+            vec!["systemctl".to_string(), "poweroff".to_string()],
+            vec!["loginctl".to_string(), "poweroff".to_string()],
+        ]),
+        _ => unreachable!("non-power actions returned before confirmation"),
+    }
+}
+
+struct ConfirmationSpec {
+    title: &'static str,
+    text: &'static str,
+    ok_label: &'static str,
+    xmessage_buttons: &'static str,
+}
+
+fn confirm_with_desktop_dialog(spec: &ConfirmationSpec) -> Result<bool, String> {
+    let dialogs = [
+        vec![
+            "zenity".to_string(),
+            "--question".to_string(),
+            format!("--title={}", spec.title),
+            format!("--text={}", spec.text),
+            format!("--ok-label={}", spec.ok_label),
+            "--cancel-label=Cancel".to_string(),
+        ],
+        vec![
+            "yad".to_string(),
+            "--question".to_string(),
+            format!("--title={}", spec.title),
+            format!("--text={}", spec.text),
+            format!("--button={}:0", spec.ok_label),
+            "--button=Cancel:1".to_string(),
+        ],
+        vec![
+            "xmessage".to_string(),
+            "-buttons".to_string(),
+            spec.xmessage_buttons.to_string(),
+            "-default".to_string(),
+            "Cancel".to_string(),
+            spec.text.to_string(),
+        ],
+    ];
+
+    let mut errors = Vec::new();
+    for dialog in dialogs {
+        let program = &dialog[0];
+        if !command_exists(program) {
+            errors.push(format!("{program} not found"));
+            continue;
+        }
+
+        let status = Command::new(program)
+            .args(&dialog[1..])
+            .stdin(Stdio::null())
+            .status()
+            .map_err(|err| format!("failed to run {program}: {err}"))?;
+
+        match status.code() {
+            Some(0) => return Ok(true),
+            Some(1) => return Ok(false),
+            Some(code) => errors.push(format!("{program} exited with status {code}")),
+            None => errors.push(format!("{program} terminated without an exit code")),
+        }
+    }
+
+    Err(format!(
+        "failed to show confirmation dialog: {}",
+        errors.join("; ")
+    ))
 }
 
 fn parse_system_action(action: &str) -> Result<SystemAction, String> {
@@ -1165,43 +1257,6 @@ fi
     spawn_detached_shell(command)
 }
 
-fn show_text_dialog(title: &str, message: &str) -> Result<(), String> {
-    let title = title.to_string();
-    let message = message.to_string();
-    let mut errors = Vec::new();
-    let dialog_commands = vec![
-        vec![
-            "zenity".to_string(),
-            "--info".to_string(),
-            format!("--title={title}"),
-            format!("--text={message}"),
-        ],
-        vec![
-            "yad".to_string(),
-            "--info".to_string(),
-            format!("--title={title}"),
-            format!("--text={message}"),
-        ],
-        vec!["xmessage".to_string(), message],
-    ];
-
-    for command in dialog_commands {
-        if command.is_empty() || !command_exists(&command[0]) {
-            errors.push(format!(
-                "{} not found",
-                command.first().cloned().unwrap_or_default()
-            ));
-            continue;
-        }
-        match spawn_detached(&command[0], &command[1..]) {
-            Ok(()) => return Ok(()),
-            Err(err) => errors.push(err),
-        }
-    }
-
-    Err(format!("failed to show dialog: {}", errors.join("; ")))
-}
-
 fn activate_remembered_window(memory: &tauri::State<WindowMemory>) -> Result<String, String> {
     let window_id = memory
         .previous_active_window
@@ -1268,6 +1323,27 @@ fn spawn_short_with_fallbacks(commands: &[Vec<String>]) -> Result<(), String> {
             .spawn()
         {
             Ok(_) => return Ok(()),
+            Err(err) => errors.push(format!("{}: {err}", command.join(" "))),
+        }
+    }
+    Err(errors.join("; "))
+}
+
+fn run_short_with_fallbacks(commands: &[Vec<String>]) -> Result<(), String> {
+    let mut errors = Vec::new();
+    for command in commands {
+        if command.is_empty() {
+            continue;
+        }
+        match Command::new(&command[0])
+            .args(&command[1..])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+        {
+            Ok(status) if status.success() => return Ok(()),
+            Ok(status) => errors.push(format!("{} exited with status {status}", command.join(" "))),
             Err(err) => errors.push(format!("{}: {err}", command.join(" "))),
         }
     }
