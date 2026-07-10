@@ -48,7 +48,9 @@ type MenuItem =
 
 type MenuAction =
   | { kind: "placeholder"; message: string }
+  | { kind: "show_about" }
   | { kind: "launch_app"; exec: string; name: string }
+  | { kind: "launch_calculator" }
   | { kind: "open_folder"; folder: "applications" | "home" | "desktop" }
   | { kind: "new_terminal_window" }
   | { kind: "send_shortcut"; action: string }
@@ -201,7 +203,7 @@ function renderPanel(logo: string | null, applications: DesktopApp[], controlPan
   appleButton.addEventListener("click", () => {
     void frontendLog("Apple handler start before toggleMenu");
     void toggleMenu(appleButton, [
-      { kind: "item", label: "About This PiForma", action: { kind: "placeholder", message: "About This PiForma" } },
+      { kind: "item", label: "About This PiForma", action: { kind: "show_about" } },
       { kind: "separator" },
       { kind: "submenu", label: "Applications", submenu: "applications", items: desktopAppsToMenuItems(applications, "(No Applications)") },
       {
@@ -283,6 +285,9 @@ function makeMenuButton(className: string) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = className;
+  button.addEventListener("pointerdown", () => {
+    void rememberActiveWindow();
+  });
   return button;
 }
 
@@ -329,6 +334,7 @@ async function toggleMenu(button: HTMLElement, items: MenuItem[]) {
   openButton = button;
   button.classList.add("is-open");
   try {
+    await rememberActiveWindow();
     await frontendLog("before invoking open_menu_popup");
     await invoke("open_menu_popup", {
       label,
@@ -343,6 +349,17 @@ async function toggleMenu(button: HTMLElement, items: MenuItem[]) {
     await frontendLog(`open_menu_popup error: ${serializeLogValue(error)}`);
     openButton = null;
     button.classList.remove("is-open");
+  }
+}
+
+async function rememberActiveWindow() {
+  if (popupMode !== "main") {
+    return;
+  }
+  try {
+    await invoke("remember_active_window");
+  } catch (error) {
+    await frontendLog(`remember_active_window failed: ${serializeLogValue(error)}`);
   }
 }
 
@@ -671,33 +688,43 @@ function launchNamedAction(applications: DesktopApp[], match: string): MenuActio
   if (app) {
     return { kind: "launch_app", exec: app.exec, name: app.name };
   }
-  return { kind: "launch_app", exec: "xcalc", name: "Calculator" };
+  return { kind: "launch_calculator" };
 }
 
 async function runMenuAction(action: MenuAction) {
-  switch (action.kind) {
-    case "placeholder":
-      window.alert(action.message);
-      return;
-    case "launch_app":
-      await invoke("launch_app", { exec: action.exec, name: action.name });
-      return;
-    case "open_folder":
-      await invoke("open_folder", { folder: action.folder });
-      return;
-    case "new_terminal_window":
-      await invoke("new_terminal_window");
-      return;
-    case "send_shortcut":
-      await invoke("send_shortcut", { action: action.action });
-      return;
-    case "run_system_action":
-      await invoke("run_system_action", { action: action.action, confirmed: action.confirmed });
-      return;
-    case "confirmed_system_action":
-      if (window.confirm(action.message)) {
-        await invoke("run_system_action", { action: action.action, confirmed: true });
-      }
+  try {
+    switch (action.kind) {
+      case "placeholder":
+        window.alert(action.message);
+        return;
+      case "show_about":
+        await invoke("show_about_piforma");
+        return;
+      case "launch_app":
+        await invoke("launch_app", { exec: action.exec, name: action.name });
+        return;
+      case "launch_calculator":
+        await invoke("launch_calculator");
+        return;
+      case "open_folder":
+        await invoke("open_folder", { folder: action.folder });
+        return;
+      case "new_terminal_window":
+        await invoke("new_terminal_window");
+        return;
+      case "send_shortcut":
+        await invoke("send_shortcut", { action: action.action });
+        return;
+      case "run_system_action":
+        await invoke("run_system_action", { action: action.action, confirmed: action.confirmed });
+        return;
+      case "confirmed_system_action":
+        if (window.confirm(action.message)) {
+          await invoke("run_system_action", { action: action.action, confirmed: true });
+        }
+    }
+  } catch (error) {
+    await frontendLog(`menu action failed: ${serializeLogValue(error)}`);
   }
 }
 

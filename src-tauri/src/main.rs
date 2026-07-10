@@ -5,7 +5,10 @@ use std::{
     collections::BTreeMap,
     env, fs,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
+    sync::Mutex,
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -46,6 +49,9 @@ menus:
   show_edit: true
   show_view: true
   show_special: true
+
+actions:
+  clean_up_window_command: ""
 "#;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,6 +61,8 @@ struct PanelConfig {
     clock: ClockConfig,
     applications: ApplicationsConfig,
     menus: MenusConfig,
+    #[serde(default)]
+    actions: ActionsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,6 +105,12 @@ struct MenusConfig {
     show_special: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct ActionsConfig {
+    #[serde(default)]
+    clean_up_window_command: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct DesktopApp {
     id: String,
@@ -133,10 +147,16 @@ enum SystemAction {
     ShowClipboard,
 }
 
+#[derive(Default)]
+struct WindowMemory {
+    previous_active_window: Mutex<Option<String>>,
+}
+
 fn main() {
     print_build_info();
     print_tauri_asset_diagnostics();
     tauri::Builder::default()
+        .manage(WindowMemory::default())
         .setup(|app| {
             let config = ensure_config().map_err(|err| err.to_string())?;
             print_config_diagnostics(&config)?;
@@ -164,8 +184,11 @@ fn main() {
             list_applications,
             list_control_panels,
             launch_app,
+            launch_calculator,
             open_folder,
             new_terminal_window,
+            remember_active_window,
+            show_about_piforma,
             send_shortcut,
             run_system_action,
         ])
@@ -723,39 +746,99 @@ fn list_control_panels() -> Result<Vec<DesktopApp>, String> {
 #[tauri::command]
 fn launch_app(exec: String, name: String) -> Result<(), String> {
     let command = clean_exec_command(&exec, &name);
-    spawn_shell(&command)
+    spawn_detached_shell(&command)
+}
+
+#[tauri::command]
+fn launch_calculator() -> Result<(), String> {
+    spawn_detached_with_fallbacks(&[
+        vec!["xcalc".to_string()],
+        vec!["galculator".to_string()],
+        vec!["gnome-calculator".to_string()],
+        vec!["mate-calc".to_string()],
+        vec!["kcalc".to_string()],
+    ])
 }
 
 #[tauri::command]
 fn open_folder(folder: String) -> Result<(), String> {
     let target = match folder.as_str() {
-        "applications" => "/usr/share/applications".to_string(),
+        "applications" => {
+            let home = env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
+            let path = PathBuf::from(home).join(".local/share/applications");
+            fs::create_dir_all(&path)
+                .map_err(|err| format!("failed to create {}: {err}", path.display()))?;
+            path.display().to_string()
+        }
         "home" => env::var("HOME").map_err(|_| "HOME is not set".to_string())?,
         "desktop" => {
             let home = env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
-            format!("{home}/Desktop")
+            let path = resolve_desktop_dir(&home)?;
+            path.display().to_string()
         }
         _ => return Err(format!("unknown folder: {folder}")),
     };
 
-    spawn_with_fallbacks(&[
+    spawn_detached_with_fallbacks(&[
         vec!["xdg-open".to_string(), target.clone()],
-        vec!["gio".to_string(), "open".to_string(), target],
+        vec!["gio".to_string(), "open".to_string(), target.clone()],
+        vec!["pcmanfm".to_string(), target],
     ])
 }
 
 #[tauri::command]
 fn new_terminal_window() -> Result<(), String> {
-    spawn_with_fallbacks(&[
+    spawn_detached_with_fallbacks(&[
         vec!["x-terminal-emulator".to_string()],
         vec!["lxterminal".to_string()],
         vec!["xfce4-terminal".to_string()],
         vec!["gnome-terminal".to_string()],
+        vec!["konsole".to_string()],
+        vec!["mate-terminal".to_string()],
     ])
 }
 
 #[tauri::command]
-fn send_shortcut(action: String) -> Result<(), String> {
+fn remember_active_window(
+    app: tauri::AppHandle,
+    memory: tauri::State<WindowMemory>,
+) -> Result<(), String> {
+    let window_id = command_stdout("xdotool", &["getactivewindow"])?;
+    if window_id.is_empty() {
+        return Err("xdotool did not return an active window".to_string());
+    }
+    if is_panel_window(&app, &window_id) {
+        return Ok(());
+    }
+    let mut remembered = memory
+        .previous_active_window
+        .lock()
+        .map_err(|_| "remembered window lock poisoned".to_string())?;
+    *remembered = Some(window_id);
+    Ok(())
+}
+
+#[tauri::command]
+fn show_about_piforma() -> Result<(), String> {
+    let info = build_info();
+    let dirty = if info.dirty { "dirty" } else { "clean" };
+    let message = format!(
+        "PiForma\nClassic Macintosh-inspired desktop environment\n\nVersion: {}\nGit commit: {}\nBranch: {}\nBuild: {}, {}",
+        env!("CARGO_PKG_VERSION"),
+        info.commit,
+        info.branch,
+        info.built_at,
+        dirty
+    );
+    show_text_dialog("About This PiForma", &message)
+}
+
+#[tauri::command]
+fn send_shortcut(
+    app: tauri::AppHandle,
+    memory: tauri::State<WindowMemory>,
+    action: String,
+) -> Result<(), String> {
     let key = match action.as_str() {
         "undo" => "ctrl+z",
         "cut" => "ctrl+x",
@@ -766,45 +849,81 @@ fn send_shortcut(action: String) -> Result<(), String> {
         _ => return Err(format!("unknown shortcut action: {action}")),
     };
 
-    spawn_with_fallbacks(&[vec![
-        "xdotool".to_string(),
-        "key".to_string(),
-        key.to_string(),
-    ]])
+    hide_menu_popup_window(&app, true);
+    activate_remembered_window(&memory)?;
+    run_short_command("xdotool", &["key", key])
 }
 
 #[tauri::command]
-fn run_system_action(action: String, confirmed: bool) -> Result<(), String> {
+fn run_system_action(
+    app: tauri::AppHandle,
+    memory: tauri::State<WindowMemory>,
+    action: String,
+    confirmed: bool,
+) -> Result<(), String> {
     let action = parse_system_action(&action)?;
     match action {
-        SystemAction::SleepDisplay => spawn_with_fallbacks(&[vec![
-            "xset".to_string(),
-            "dpms".to_string(),
-            "force".to_string(),
-            "off".to_string(),
-        ]]),
-        SystemAction::ShowDesktop => spawn_with_fallbacks(&[
-            vec!["wmctrl".to_string(), "-k".to_string(), "on".to_string()],
+        SystemAction::SleepDisplay => spawn_short_with_fallbacks(&[
             vec![
-                "xdotool".to_string(),
-                "key".to_string(),
-                "Super+d".to_string(),
+                "xset".to_string(),
+                "dpms".to_string(),
+                "force".to_string(),
+                "off".to_string(),
             ],
+            vec!["xset".to_string(), "s".to_string(), "activate".to_string()],
         ]),
-        SystemAction::Refresh => Ok(()),
-        SystemAction::CleanUpWindow => Ok(()),
-        SystemAction::ShowClipboard => Ok(()),
+        SystemAction::ShowDesktop => {
+            hide_menu_popup_window(&app, true);
+            spawn_short_with_fallbacks(&[
+                vec!["wmctrl".to_string(), "-k".to_string(), "on".to_string()],
+                vec![
+                    "xdotool".to_string(),
+                    "key".to_string(),
+                    "Super+d".to_string(),
+                ],
+            ])
+        }
+        SystemAction::Refresh => {
+            hide_menu_popup_window(&app, true);
+            if activate_remembered_window(&memory).is_ok() {
+                run_short_command("xdotool", &["key", "F5"])
+            } else {
+                run_short_command("xrefresh", &[])
+            }
+        }
+        SystemAction::CleanUpWindow => {
+            hide_menu_popup_window(&app, true);
+            let config = ensure_config()?;
+            if let Err(err) = activate_remembered_window(&memory) {
+                eprintln!("clean up window: no remembered target to reactivate: {err}");
+            }
+            if command_exists("xdotool") {
+                let _ = run_short_command("xdotool", &["key", "F5"]);
+            }
+            if config.actions.clean_up_window_command.trim().is_empty() {
+                Ok(())
+            } else {
+                spawn_detached_shell(&config.actions.clean_up_window_command)
+            }
+        }
+        SystemAction::ShowClipboard => show_clipboard(),
         SystemAction::Restart => {
             if !confirmed {
                 return Err("restart requires confirmation".to_string());
             }
-            spawn_with_fallbacks(&[vec!["systemctl".to_string(), "reboot".to_string()]])
+            spawn_short_with_fallbacks(&[
+                vec!["systemctl".to_string(), "reboot".to_string()],
+                vec!["loginctl".to_string(), "reboot".to_string()],
+            ])
         }
         SystemAction::ShutDown => {
             if !confirmed {
                 return Err("shutdown requires confirmation".to_string());
             }
-            spawn_with_fallbacks(&[vec!["systemctl".to_string(), "poweroff".to_string()]])
+            spawn_short_with_fallbacks(&[
+                vec!["systemctl".to_string(), "poweroff".to_string()],
+                vec!["loginctl".to_string(), "poweroff".to_string()],
+            ])
         }
     }
 }
@@ -972,32 +1091,290 @@ fn clean_exec_command(exec: &str, name: &str) -> String {
         command = command.replace(token, "");
     }
     command = command.replace("%c", &shell_quote(name));
-    command.trim().to_string()
+    remove_remaining_field_codes(&command).trim().to_string()
+}
+
+fn remove_remaining_field_codes(command: &str) -> String {
+    let mut cleaned = String::new();
+    let mut chars = command.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '%' {
+            cleaned.push(ch);
+            continue;
+        }
+        match chars.peek() {
+            Some('%') => {
+                chars.next();
+                cleaned.push('%');
+            }
+            Some(_) => {
+                chars.next();
+            }
+            None => {}
+        }
+    }
+    cleaned
 }
 
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-fn spawn_shell(command: &str) -> Result<(), String> {
-    Command::new("sh")
-        .arg("-c")
-        .arg(command)
-        .spawn()
-        .map(|_| ())
-        .map_err(|err| format!("failed to run {command}: {err}"))
+fn resolve_desktop_dir(home: &str) -> Result<PathBuf, String> {
+    if command_exists("xdg-user-dir") {
+        if let Ok(path) = command_stdout("xdg-user-dir", &["DESKTOP"]) {
+            let path = PathBuf::from(path);
+            if path.is_dir() {
+                return Ok(path);
+            }
+        }
+    }
+    let path = PathBuf::from(home).join("Desktop");
+    fs::create_dir_all(&path)
+        .map_err(|err| format!("failed to create {}: {err}", path.display()))?;
+    Ok(path)
 }
 
-fn spawn_with_fallbacks(commands: &[Vec<String>]) -> Result<(), String> {
+fn show_clipboard() -> Result<(), String> {
+    let command = r#"
+set -eu
+tmp="${TMPDIR:-/tmp}/piforma-clipboard-$$.txt"
+trap 'rm -f "$tmp"' EXIT
+if command -v xclip >/dev/null 2>&1; then
+  xclip -selection clipboard -o >"$tmp" 2>/dev/null || printf '%s\n' 'Clipboard is empty or does not contain text.' >"$tmp"
+elif command -v xsel >/dev/null 2>&1; then
+  xsel --clipboard --output >"$tmp" 2>/dev/null || printf '%s\n' 'Clipboard is empty or does not contain text.' >"$tmp"
+elif command -v wl-paste >/dev/null 2>&1; then
+  wl-paste --no-newline >"$tmp" 2>/dev/null || printf '%s\n' 'Clipboard is empty or does not contain text.' >"$tmp"
+else
+  printf '%s\n' 'No clipboard reader found. Install xclip, xsel, or wl-clipboard.' >"$tmp"
+fi
+if [ ! -s "$tmp" ]; then
+  printf '%s\n' 'Clipboard is empty or does not contain text.' >"$tmp"
+fi
+if command -v zenity >/dev/null 2>&1; then
+  exec zenity --text-info --title='Clipboard' --filename="$tmp"
+elif command -v yad >/dev/null 2>&1; then
+  exec yad --text-info --title='Clipboard' --filename="$tmp"
+elif command -v xmessage >/dev/null 2>&1; then
+  exec xmessage -file "$tmp"
+else
+  exit 127
+fi
+"#;
+    spawn_detached_shell(command)
+}
+
+fn show_text_dialog(title: &str, message: &str) -> Result<(), String> {
+    let title = title.to_string();
+    let message = message.to_string();
+    let mut errors = Vec::new();
+    let dialog_commands = vec![
+        vec![
+            "zenity".to_string(),
+            "--info".to_string(),
+            format!("--title={title}"),
+            format!("--text={message}"),
+        ],
+        vec![
+            "yad".to_string(),
+            "--info".to_string(),
+            format!("--title={title}"),
+            format!("--text={message}"),
+        ],
+        vec!["xmessage".to_string(), message],
+    ];
+
+    for command in dialog_commands {
+        if command.is_empty() || !command_exists(&command[0]) {
+            errors.push(format!(
+                "{} not found",
+                command.first().cloned().unwrap_or_default()
+            ));
+            continue;
+        }
+        match spawn_detached(&command[0], &command[1..]) {
+            Ok(()) => return Ok(()),
+            Err(err) => errors.push(err),
+        }
+    }
+
+    Err(format!("failed to show dialog: {}", errors.join("; ")))
+}
+
+fn activate_remembered_window(memory: &tauri::State<WindowMemory>) -> Result<String, String> {
+    let window_id = memory
+        .previous_active_window
+        .lock()
+        .map_err(|_| "remembered window lock poisoned".to_string())?
+        .clone()
+        .ok_or_else(|| "no previously active window remembered".to_string())?;
+    run_short_command("xdotool", &["windowactivate", "--sync", &window_id])?;
+    thread::sleep(Duration::from_millis(75));
+    Ok(window_id)
+}
+
+fn is_panel_window(_app: &tauri::AppHandle, window_id: &str) -> bool {
+    let Ok(name) = command_stdout("xdotool", &["getwindowname", window_id]) else {
+        return false;
+    };
+    matches!(
+        name.as_str(),
+        "PiForma Panel" | "PiForma Menu" | "PiForma Menu Flyout" | "Classic PiForma menu bar"
+    ) || name.contains("piforma-panel")
+}
+
+fn command_stdout(program: &str, args: &[&str]) -> Result<String, String> {
+    let output = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|err| format!("failed to run {program}: {err}"))?;
+    if !output.status.success() {
+        return Err(format!("{program} exited with status {}", output.status));
+    }
+    String::from_utf8(output.stdout)
+        .map(|value| value.trim().to_string())
+        .map_err(|err| format!("{program} returned non-UTF-8 output: {err}"))
+}
+
+fn run_short_command(program: &str, args: &[&str]) -> Result<(), String> {
+    let status = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|err| format!("failed to run {program}: {err}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("{program} exited with status {status}"))
+    }
+}
+
+fn spawn_short_with_fallbacks(commands: &[Vec<String>]) -> Result<(), String> {
     let mut errors = Vec::new();
     for command in commands {
         if command.is_empty() {
             continue;
         }
-        match Command::new(&command[0]).args(&command[1..]).spawn() {
+        match Command::new(&command[0])
+            .args(&command[1..])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
             Ok(_) => return Ok(()),
             Err(err) => errors.push(format!("{}: {err}", command.join(" "))),
         }
     }
     Err(errors.join("; "))
+}
+
+fn spawn_detached_with_fallbacks(commands: &[Vec<String>]) -> Result<(), String> {
+    let mut errors = Vec::new();
+    for command in commands {
+        if command.is_empty() {
+            continue;
+        }
+        if !command_exists(&command[0]) {
+            errors.push(format!("{} not found", command[0]));
+            continue;
+        }
+        match spawn_detached(&command[0], &command[1..]) {
+            Ok(()) => return Ok(()),
+            Err(err) => errors.push(err),
+        }
+    }
+    Err(errors.join("; "))
+}
+
+fn spawn_detached_shell(command: &str) -> Result<(), String> {
+    spawn_detached(
+        "sh",
+        &[
+            "-c".to_string(),
+            "exec sh -c \"$1\"".to_string(),
+            "piforma-shell".to_string(),
+            command.to_string(),
+        ],
+    )
+}
+
+fn spawn_detached(program: &str, args: &[String]) -> Result<(), String> {
+    if command_exists("systemd-run") {
+        let unit = unique_launch_unit_name();
+        let mut command_args = vec![
+            "--user".to_string(),
+            "--scope".to_string(),
+            "--collect".to_string(),
+            "--quiet".to_string(),
+            format!("--unit={unit}"),
+        ];
+        for key in [
+            "DISPLAY",
+            "XAUTHORITY",
+            "WAYLAND_DISPLAY",
+            "XDG_RUNTIME_DIR",
+            "DBUS_SESSION_BUS_ADDRESS",
+        ] {
+            if let Ok(value) = env::var(key) {
+                command_args.push(format!("--setenv={key}={value}"));
+            }
+        }
+        command_args.push("--".to_string());
+        command_args.push(program.to_string());
+        command_args.extend(args.iter().cloned());
+        match Command::new("systemd-run")
+            .args(&command_args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(_) => return Ok(()),
+            Err(err) => eprintln!("systemd-run detached launch failed: {err}"),
+        }
+    }
+
+    if command_exists("setsid") {
+        let mut command = Command::new("setsid");
+        command.arg("-f").arg("--").arg(program).args(args);
+        match command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(_) => return Ok(()),
+            Err(err) => eprintln!("setsid detached launch failed: {err}"),
+        }
+    }
+
+    Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|err| format!("failed to launch {program}: {err}"))
+}
+
+fn unique_launch_unit_name() -> String {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    format!("piforma-launch-{}-{timestamp}", std::process::id())
+}
+
+fn command_exists(name: &str) -> bool {
+    let Some(path) = env::var_os("PATH") else {
+        return false;
+    };
+    env::split_paths(&path).any(|dir| dir.join(name).is_file())
 }
