@@ -58,6 +58,32 @@ npm run tauri -- build
 
 The generated package is written under `src-tauri/target/release/bundle/deb/`.
 
+### Packaged frontend diagnostics
+
+Release builds are configured to bundle the Vite output from `../dist` through
+`build.frontendDist` in `src-tauri/tauri.conf.json`. This debug branch also
+sets `app.security.csp` to `null` so CSP should not block the bundled frontend.
+
+Before packaging, confirm the built frontend contains both the static HTML
+marker and the JavaScript diagnostics:
+
+```sh
+grep -R FRONTEND_STATIC_MARKER dist
+grep -R "frontend init start" dist
+```
+
+After installing a package, confirm the installed binary was built from this
+frontend/config state:
+
+```sh
+strings /usr/bin/piforma-panel | grep FRONTEND
+```
+
+At runtime, the app should print `frontend top-level loaded` as soon as the
+frontend module starts and `frontend init start` when initialization reaches
+Rust. If the static `FRONTEND_STATIC_MARKER` remains visible in the panel, the
+HTML loaded but the JavaScript bundle did not execute.
+
 ## Configuration
 
 On first launch, PiForma Panel creates:

@@ -14,9 +14,11 @@
       {
         "label": "main",
         "title": "PiForma Panel",
-        "width": 656,
+        "width": 658,
         "height": 20,
-        "x": 77,
+        "minWidth": 1,
+        "minHeight": 1,
+        "x": 76,
         "y": 0,
         "resizable": false,
         "fullscreen": false,
@@ -24,7 +26,7 @@
         "transparent": true,
         "shadow": false,
         "skipTaskbar": true,
-        "visible": true
+        "visible": false
       }
     ],
     "security": {

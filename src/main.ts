@@ -1,5 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import "./styles.css";
+
+const STATIC_FRONTEND_MARKER_ID = "static-frontend-marker";
+const DEBUG_EVENT_DIAGNOSTICS = false;
 
 type PanelConfig = {
   bar: {
@@ -38,9 +42,24 @@ type DesktopApp = {
 };
 
 type MenuItem =
-  | { kind: "item"; label: string; action: () => void; enabled?: boolean }
-  | { kind: "separator" }
-  | { kind: "submenu"; label: string; items: MenuItem[]; scrollable?: boolean };
+  | { kind: "item"; label: string; action: MenuAction; enabled?: boolean }
+  | { kind: "separator" };
+
+type MenuAction =
+  | { kind: "placeholder"; message: string }
+  | { kind: "launch_app"; exec: string; name: string }
+  | { kind: "open_folder"; folder: "applications" | "home" | "desktop" }
+  | { kind: "new_terminal_window" }
+  | { kind: "send_shortcut"; action: string }
+  | { kind: "run_system_action"; action: string; confirmed: boolean }
+  | { kind: "confirmed_system_action"; action: "restart" | "shut_down"; message: string };
+
+type RenderMenuPopupPayload = {
+  label: string;
+  items: MenuItem[];
+  width: number;
+  height: number;
+};
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -51,19 +70,58 @@ if (!app) {
 const appRoot = app;
 
 let config: PanelConfig;
-let openMenu: HTMLElement | null = null;
 let openButton: HTMLElement | null = null;
+let globalMenuListenersInstalled = false;
+let isPopupWindow = false;
+let popupBlurCloseTimer: number | null = null;
 
+markFrontendLoaded();
 void init();
 
-async function init() {
-  config = await invoke<PanelConfig>("get_config");
-  const logo = await invoke<string | null>("get_apple_logo_data_url");
-  const [applications, controlPanels] = await Promise.all([
-    invoke<DesktopApp[]>("list_applications"),
-    invoke<DesktopApp[]>("list_control_panels")
-  ]);
+function markFrontendLoaded() {
+  const marker = document.getElementById(STATIC_FRONTEND_MARKER_ID);
+  if (marker) {
+    marker.textContent = "FRONTEND_JS_STARTED";
+    marker.remove();
+  }
+  void frontendLog("frontend top-level loaded");
+}
 
+function serializeLogValue(value: unknown) {
+  if (value instanceof Error) {
+    return `${value.name}: ${value.message}`;
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+async function frontendLog(message: string) {
+  console.log(message);
+  try {
+    await invoke("frontend_log", { message });
+    return true;
+  } catch (error) {
+    console.error("frontend_log failed", error);
+    return false;
+  }
+}
+
+async function init() {
+  const params = new URLSearchParams(window.location.search);
+  isPopupWindow = params.get("popup") === "menu";
+  config = await invoke<PanelConfig>("get_config");
+  const frontendLogAvailable = await frontendLog("frontend init start");
+  if (!frontendLogAvailable) {
+    console.error("frontend init start failed to reach Rust frontend_log");
+    document.title = "PiForma Panel frontend_log failed";
+    document.documentElement.dataset.debug = "frontend-log-failed";
+  }
   document.documentElement.style.setProperty("--bar-width", `${config.bar.width}px`);
   document.documentElement.style.setProperty("--bar-height", `${config.bar.height}px`);
   document.documentElement.style.setProperty("--radius-tl", `${config.bar.radius_top_left}px`);
@@ -72,12 +130,34 @@ async function init() {
   document.documentElement.style.setProperty("--panel-font-size", `${config.bar.font_size}px`);
   document.documentElement.style.setProperty("--menu-max-height", `${config.applications.max_menu_height}px`);
 
-  renderPanel(logo, applications, controlPanels);
+  installGlobalMenuListeners();
+
+  if (isPopupWindow) {
+    void frontendLog("popup mode init");
+    document.body.classList.add("popup-window");
+    await initializePopupWindow();
+    return;
+  }
+
+  void listen<{ label: string; action: MenuAction }>("menu-action-selected", (event) => {
+    clearOpenMenuState();
+    void runMenuAction(event.payload.action).catch(console.error);
+  });
+  void listen("menu-popup-closed", () => {
+    clearOpenMenuState();
+  });
+
+  await invoke("initialize_main_window");
+  const logo = await invoke<string | null>("get_apple_logo_data_url");
+  const applications = await invoke<DesktopApp[]>("list_applications");
+
+  renderPanel(logo, applications);
   updateClock();
   window.setInterval(updateClock, 1000);
 }
 
-function renderPanel(logo: string | null, applications: DesktopApp[], controlPanels: DesktopApp[]) {
+function renderPanel(logo: string | null, applications: DesktopApp[]) {
+  void frontendLog("frontend renderPanel start");
   const bar = document.createElement("div");
   bar.className = "menu-bar";
 
@@ -98,23 +178,25 @@ function renderPanel(logo: string | null, applications: DesktopApp[], controlPan
     appleButton.classList.add("apple-fallback");
   }
   appleButton.addEventListener("click", () => {
-    toggleMenu(appleButton, [
-      { kind: "item", label: "About This PiForma", action: () => placeholder("About This PiForma") },
+    void frontendLog("Apple handler start before toggleMenu");
+    void toggleMenu(appleButton, [
+      { kind: "item", label: "About This PiForma", action: { kind: "placeholder", message: "About This PiForma" } },
       { kind: "separator" },
-      { kind: "submenu", label: "Applications", items: appItems(applications), scrollable: true },
-      { kind: "submenu", label: "Control Panels", items: appItems(controlPanels), scrollable: true },
-      { kind: "item", label: "Calculator", action: () => launchNamed(applications, "calculator") }
-    ]);
+      { kind: "item", label: "Applications", enabled: false, action: { kind: "placeholder", message: "Applications" } },
+      { kind: "item", label: "Control Panels", enabled: false, action: { kind: "placeholder", message: "Control Panels" } },
+      { kind: "item", label: "Calculator", action: launchNamedAction(applications, "calculator") }
+    ]).catch(console.error);
   });
+  installButtonEventDiagnostics(appleButton, "Apple");
   left.append(appleButton);
 
   if (config.menus.show_file) {
     left.append(menuTitle("File", [
-      { kind: "item", label: "Open Applications Folder", action: () => invoke("open_folder", { folder: "applications" }) },
-      { kind: "item", label: "Open Home Folder", action: () => invoke("open_folder", { folder: "home" }) },
-      { kind: "item", label: "Open Desktop", action: () => invoke("open_folder", { folder: "desktop" }) },
+      { kind: "item", label: "Open Applications Folder", action: { kind: "open_folder", folder: "applications" } },
+      { kind: "item", label: "Open Home Folder", action: { kind: "open_folder", folder: "home" } },
+      { kind: "item", label: "Open Desktop", action: { kind: "open_folder", folder: "desktop" } },
       { kind: "separator" },
-      { kind: "item", label: "New Terminal Window", action: () => invoke("new_terminal_window") }
+      { kind: "item", label: "New Terminal Window", action: { kind: "new_terminal_window" } }
     ]));
   }
 
@@ -128,24 +210,24 @@ function renderPanel(logo: string | null, applications: DesktopApp[], controlPan
       shortcut("Clear", "clear"),
       shortcut("Select All", "select_all"),
       { kind: "separator" },
-      { kind: "item", label: "Show Clipboard", action: () => invoke("run_system_action", { action: "show_clipboard", confirmed: false }) }
+      { kind: "item", label: "Show Clipboard", action: { kind: "run_system_action", action: "show_clipboard", confirmed: false } }
     ]));
   }
 
   if (config.menus.show_view) {
     left.append(menuTitle("View", [
-      { kind: "item", label: "Show Desktop", action: () => invoke("run_system_action", { action: "show_desktop", confirmed: false }) },
-      { kind: "item", label: "Refresh", action: () => invoke("run_system_action", { action: "refresh", confirmed: false }) }
+      { kind: "item", label: "Show Desktop", action: { kind: "run_system_action", action: "show_desktop", confirmed: false } },
+      { kind: "item", label: "Refresh", action: { kind: "run_system_action", action: "refresh", confirmed: false } }
     ]));
   }
 
   if (config.menus.show_special) {
     left.append(menuTitle("Special", [
-      { kind: "item", label: "Clean Up Window", action: () => invoke("run_system_action", { action: "clean_up_window", confirmed: false }) },
+      { kind: "item", label: "Clean Up Window", action: { kind: "run_system_action", action: "clean_up_window", confirmed: false } },
       { kind: "separator" },
-      { kind: "item", label: "Sleep Display", action: () => invoke("run_system_action", { action: "sleep_display", confirmed: false }) },
-      { kind: "item", label: "Restart", action: () => confirmedAction("restart", "Restart PiForma?") },
-      { kind: "item", label: "Shut Down", action: () => confirmedAction("shut_down", "Shut down PiForma?") }
+      { kind: "item", label: "Sleep Display", action: { kind: "run_system_action", action: "sleep_display", confirmed: false } },
+      { kind: "item", label: "Restart", action: { kind: "confirmed_system_action", action: "restart", message: "Restart PiForma?" } },
+      { kind: "item", label: "Shut Down", action: { kind: "confirmed_system_action", action: "shut_down", message: "Shut down PiForma?" } }
     ]));
   }
 
@@ -156,22 +238,18 @@ function renderPanel(logo: string | null, applications: DesktopApp[], controlPan
 
   bar.append(left, right);
   appRoot.replaceChildren(bar);
-
-  document.addEventListener("pointerdown", (event) => {
-    const target = event.target;
-    if (!(target instanceof Node)) {
-      return;
-    }
-    if (openMenu && !openMenu.contains(target) && !openButton?.contains(target)) {
-      closeMenu();
-    }
-  });
+  logRenderedMenuDiagnostics();
 }
 
 function menuTitle(label: string, items: MenuItem[]) {
+  void frontendLog(`menuTitle created: ${label}`);
   const button = makeMenuButton("menu-title");
   button.textContent = label;
-  button.addEventListener("click", () => toggleMenu(button, items));
+  button.addEventListener("click", () => {
+    void frontendLog(`menuTitle click handler start: ${label}`);
+    void toggleMenu(button, items).catch(console.error);
+  });
+  installButtonEventDiagnostics(button, label);
   return button;
 }
 
@@ -183,49 +261,72 @@ function makeMenuButton(className: string) {
 }
 
 function shortcut(label: string, action: string): MenuItem {
-  return { kind: "item", label, action: () => invoke("send_shortcut", { action }) };
+  return { kind: "item", label, action: { kind: "send_shortcut", action } };
 }
 
-function appItems(apps: DesktopApp[]): MenuItem[] {
-  if (apps.length === 0) {
-    return [{ kind: "item", label: "No Items Found", enabled: false, action: () => undefined }];
-  }
-
-  const items: MenuItem[] = [];
-  let lastGroup = "";
-  for (const app of apps) {
-    if (lastGroup && app.group !== lastGroup) {
-      items.push({ kind: "separator" });
-    }
-    items.push({
-      kind: "item",
-      label: app.name,
-      action: () => invoke("launch_app", { exec: app.exec, name: app.name })
-    });
-    lastGroup = app.group;
-  }
-  return items;
-}
-
-function toggleMenu(button: HTMLElement, items: MenuItem[]) {
+async function toggleMenu(button: HTMLElement, items: MenuItem[]) {
+  console.log("toggleMenu start");
+  await frontendLog("toggleMenu start");
   if (openButton === button) {
-    closeMenu();
+    await closeMenu();
     return;
   }
 
-  closeMenu();
-  const menu = buildMenu(items);
+  if (openButton) {
+    openButton.classList.remove("is-open");
+  }
   const rect = button.getBoundingClientRect();
-  menu.style.left = `${Math.floor(rect.left)}px`;
-  menu.style.top = `${config.bar.height}px`;
-  document.body.append(menu);
-  openMenu = menu;
+  const menu = measureMenu(items);
+  const label = button.getAttribute("aria-label") ?? button.textContent ?? "Menu";
+  const x = config.bar.x + Math.floor(rect.left);
+  const y = config.bar.y + config.bar.height;
+  await frontendLog(`menu label=${label}`);
+  await frontendLog(`menu item count=${items.length}`);
+  await frontendLog(`measured menu width=${menu.width}, height=${menu.height}`);
+  await frontendLog(`computed popup x=${x}, y=${y}`);
   openButton = button;
   button.classList.add("is-open");
-  resizeForOpenMenu(menu);
+  try {
+    await frontendLog("before invoking open_menu_popup");
+    await invoke("open_menu_popup", {
+      label,
+      x,
+      y,
+      width: menu.width,
+      height: menu.height,
+      items
+    });
+    await frontendLog("after successful open_menu_popup");
+  } catch (error) {
+    await frontendLog(`open_menu_popup error: ${serializeLogValue(error)}`);
+    openButton = null;
+    button.classList.remove("is-open");
+  }
 }
 
-function buildMenu(items: MenuItem[]) {
+async function initializePopupWindow() {
+  appRoot.replaceChildren();
+  await listen<RenderMenuPopupPayload>("render-menu-popup", async (event) => {
+    cancelPopupBlurClose();
+    renderPopupMenu(event.payload);
+    await invoke("menu_popup_rendered", {
+      label: event.payload.label,
+      width: event.payload.width,
+      height: event.payload.height
+    });
+  });
+  void frontendLog("popup waiting for render-menu-popup");
+}
+
+function renderPopupMenu(payload: RenderMenuPopupPayload) {
+  const menu = buildMenu(payload.items);
+  appRoot.replaceChildren(menu);
+  void frontendLog(
+    `popup rendered label=${payload.label}, item count=${payload.items.length}, width=${payload.width}, height=${payload.height}`
+  );
+}
+
+function buildMenu(items: MenuItem[], options: { inertActions?: boolean } = {}) {
   const menu = document.createElement("div");
   menu.className = "menu";
   menu.setAttribute("role", "menu");
@@ -238,66 +339,216 @@ function buildMenu(items: MenuItem[]) {
       continue;
     }
 
-    if (item.kind === "submenu") {
-      const row = document.createElement("div");
-      row.className = "menu-item has-submenu";
-      row.textContent = item.label;
-      const submenu = buildMenu(item.items);
-      submenu.classList.add("submenu");
-      if (item.scrollable) {
-        submenu.classList.add("scrollable");
-      }
-      row.append(submenu);
-      menu.append(row);
-      continue;
-    }
-
     const row = document.createElement("button");
     row.type = "button";
     row.className = "menu-item";
     row.textContent = item.label;
     row.disabled = item.enabled === false;
-    row.addEventListener("click", () => {
-      closeMenu();
-      void item.action();
-    });
+    if (!options.inertActions) {
+      row.addEventListener("click", async () => {
+        if (isPopupWindow) {
+          await invoke("select_menu_action", { label: item.label, action: item.action });
+          return;
+        }
+
+        await closeMenu();
+        await runMenuAction(item.action);
+      });
+    }
     menu.append(row);
   }
 
   return menu;
 }
 
-function closeMenu() {
-  openMenu?.remove();
-  openButton?.classList.remove("is-open");
-  openMenu = null;
-  openButton = null;
-  void invoke("resize_panel_window", { menuHeight: null });
-}
-
-function resizeForOpenMenu(menu: HTMLElement) {
+function measureMenu(items: MenuItem[]) {
+  const menu = buildMenu(items, { inertActions: true });
+  menu.classList.add("measure-menu");
+  document.body.append(menu);
   const rect = menu.getBoundingClientRect();
-  const menuHeight = Math.ceil(rect.height + 4);
-  void invoke("resize_panel_window", { menuHeight });
+  menu.remove();
+
+  return {
+    width: Math.max(1, Math.ceil(rect.width)),
+    height: Math.max(1, Math.ceil(rect.height))
+  };
 }
 
-function launchNamed(applications: DesktopApp[], match: string) {
+function installGlobalMenuListeners() {
+  if (globalMenuListenersInstalled) {
+    return;
+  }
+
+  installEventPathDiagnostics();
+  document.addEventListener("pointerdown", handleGlobalPointerDown, true);
+  document.addEventListener("keydown", handleGlobalKeyDown, true);
+  window.addEventListener("blur", () => {
+    if (isPopupWindow) {
+      void frontendLog("popup blur");
+      cancelPopupBlurClose();
+      popupBlurCloseTimer = window.setTimeout(() => {
+        void closeMenu().catch(console.error);
+      }, 80);
+    }
+  });
+  globalMenuListenersInstalled = true;
+}
+
+function cancelPopupBlurClose() {
+  if (popupBlurCloseTimer === null) {
+    return;
+  }
+  window.clearTimeout(popupBlurCloseTimer);
+  popupBlurCloseTimer = null;
+}
+
+function installEventPathDiagnostics() {
+  if (!DEBUG_EVENT_DIAGNOSTICS) {
+    return;
+  }
+
+  for (const eventType of ["pointerdown", "mousedown", "mouseup", "click"]) {
+    document.addEventListener(
+      eventType,
+      (event) => {
+        if (!(event instanceof MouseEvent)) {
+          return;
+        }
+        void frontendLog(`document event: ${formatMouseEvent(event)}`);
+      },
+      true
+    );
+  }
+}
+
+function installButtonEventDiagnostics(button: HTMLElement, label: string) {
+  if (!DEBUG_EVENT_DIAGNOSTICS) {
+    return;
+  }
+
+  for (const eventType of ["pointerdown", "mousedown", "mouseup", "click"]) {
+    button.addEventListener(eventType, () => {
+      void frontendLog(`button event: ${label} ${eventType}`);
+    });
+  }
+}
+
+function formatMouseEvent(event: MouseEvent) {
+  const target = event.target;
+  const element = target instanceof Element ? target : null;
+  const tagName = element?.tagName ?? "unknown";
+  const className = element ? String(element.className) : "";
+  const text = element?.textContent?.trim().replace(/\s+/g, " ").slice(0, 40) ?? "";
+  return `${event.type} target=${tagName} class=${className} text="${text}" x=${event.clientX} y=${event.clientY}`;
+}
+
+function logRenderedMenuDiagnostics() {
+  const menuTitles = document.querySelectorAll<HTMLElement>(".menu-title");
+  const appleButton = document.querySelector<HTMLElement>(".apple-button");
+  void frontendLog(`rendered menu-title count=${menuTitles.length}`);
+  void frontendLog(`rendered apple button exists=${appleButton !== null}`);
+
+  const buttons = document.querySelectorAll<HTMLElement>(".apple-button, .menu-title");
+  buttons.forEach((button, index) => {
+    const label = button.getAttribute("aria-label") ?? button.textContent?.trim() ?? "";
+    const text = button.textContent?.trim().replace(/\s+/g, " ") ?? "";
+    const style = window.getComputedStyle(button);
+    const rect = button.getBoundingClientRect();
+    void frontendLog(`menu button ${index}: label=${label}, text="${text}"`);
+    void frontendLog(
+      `menu button ${index}: pointer-events=${style.pointerEvents}, rect=x:${Math.round(rect.x)}, y:${Math.round(rect.y)}, width:${Math.round(rect.width)}, height:${Math.round(rect.height)}`
+    );
+  });
+}
+
+function handleGlobalPointerDown(event: PointerEvent) {
+  const target = event.target;
+  if (!(target instanceof Node)) {
+    return;
+  }
+  if (!isPopupWindow && openButton && !openButton.contains(target) && !isPanelMenuButton(target)) {
+    console.log("outside-click close: main window pointerdown outside active menu button");
+    void closeMenu({ pointerEvent: event }).catch(console.error);
+  }
+  if (isPopupWindow && target instanceof Element && !target.closest(".menu")) {
+    void closeMenu({ pointerEvent: event }).catch(console.error);
+  }
+}
+
+function isPanelMenuButton(target: Node) {
+  return target instanceof Element && target.closest(".apple-button, .menu-title");
+}
+
+function handleGlobalKeyDown(event: KeyboardEvent) {
+  if (event.key === "Escape" && (isPopupWindow || openButton)) {
+    event.preventDefault();
+    void closeMenu().catch(console.error);
+  }
+}
+
+async function closeMenu(options: { pointerEvent?: PointerEvent } = {}) {
+  await frontendLog("closeMenu start");
+  document.querySelectorAll<HTMLElement>("body > .menu").forEach((menu) => menu.remove());
+  clearOpenMenuState();
+  clearInteractionState(options.pointerEvent);
+  await invoke("close_menu_popup");
+  await frontendLog("closeMenu end");
+}
+
+function clearOpenMenuState() {
+  openButton?.classList.remove("is-open");
+  openButton = null;
+}
+
+function clearInteractionState(pointerEvent?: PointerEvent) {
+  const pointerTarget = pointerEvent?.target;
+  if (pointerEvent && pointerTarget instanceof Element && pointerTarget.hasPointerCapture(pointerEvent.pointerId)) {
+    try {
+      pointerTarget.releasePointerCapture(pointerEvent.pointerId);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  if (document.activeElement instanceof HTMLElement) {
+    document.activeElement.blur();
+  }
+  window.getSelection()?.removeAllRanges();
+}
+
+function launchNamedAction(applications: DesktopApp[], match: string): MenuAction {
   const app = applications.find((item) => item.name.toLowerCase().includes(match));
   if (app) {
-    return invoke("launch_app", { exec: app.exec, name: app.name });
+    return { kind: "launch_app", exec: app.exec, name: app.name };
   }
-  return invoke("launch_app", { exec: "xcalc", name: "Calculator" });
+  return { kind: "launch_app", exec: "xcalc", name: "Calculator" };
 }
 
-function confirmedAction(action: "restart" | "shut_down", message: string) {
-  if (window.confirm(message)) {
-    return invoke("run_system_action", { action, confirmed: true });
+async function runMenuAction(action: MenuAction) {
+  switch (action.kind) {
+    case "placeholder":
+      window.alert(action.message);
+      return;
+    case "launch_app":
+      await invoke("launch_app", { exec: action.exec, name: action.name });
+      return;
+    case "open_folder":
+      await invoke("open_folder", { folder: action.folder });
+      return;
+    case "new_terminal_window":
+      await invoke("new_terminal_window");
+      return;
+    case "send_shortcut":
+      await invoke("send_shortcut", { action: action.action });
+      return;
+    case "run_system_action":
+      await invoke("run_system_action", { action: action.action, confirmed: action.confirmed });
+      return;
+    case "confirmed_system_action":
+      if (window.confirm(action.message)) {
+        await invoke("run_system_action", { action: action.action, confirmed: true });
+      }
   }
-  return undefined;
-}
-
-function placeholder(message: string) {
-  window.alert(message);
 }
 
 function updateClock() {

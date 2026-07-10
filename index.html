@@ -3,9 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="piforma-frontend-marker" content="FRONTEND_MARKER_HITBOX_DIAGNOSTICS" />
     <title>PiForma Panel</title>
   </head>
   <body>
+    <div
+      id="static-frontend-marker"
+      style="position: fixed; top: 0; left: 0; z-index: 2147483647; padding: 1px 4px; background: #ff0; color: #000; font: 10px monospace;"
+    >
+      FRONTEND_STATIC_MARKER
+    </div>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
