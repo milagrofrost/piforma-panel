@@ -9,6 +9,7 @@ PiForma Panel is a Tauri 2 desktop panel that recreates a classic Macintosh-styl
 - Live clock with configurable `strftime` formatting.
 - Application and Control Panel submenus generated from `.desktop` launchers.
 - Desktop helpers for opening folders, launching a terminal, sending edit shortcuts, showing the desktop, refreshing, sleeping the display, restarting, and shutting down.
+- Publishes an X11 dock window type and top-edge EWMH strut so Openbox keeps normal windows below the panel.
 - User-editable YAML configuration created on first launch.
 
 ## Requirements
@@ -17,11 +18,13 @@ PiForma Panel is a Tauri 2 desktop panel that recreates a classic Macintosh-styl
 - npm.
 - Rust stable with Cargo.
 - Linux desktop dependencies required by Tauri 2, GTK, WebKitGTK, and AppIndicator support.
+- X11 with an EWMH-compatible window manager such as Openbox for desktop work-area reservation.
+- `xprop` from `x11-utils` for publishing the panel strut after the native window is shown.
 
 On Debian or Raspberry Pi OS style systems, the native dependencies are typically installed with:
 
 ```sh
-sudo apt install build-essential curl libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+sudo apt install build-essential curl libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev x11-utils
 ```
 
 ## Development
@@ -93,6 +96,28 @@ PIFORMA_PANEL_DEBUG=1 piforma-panel
 ```
 
 Keep verbose diagnostics disabled for normal packaged sessions.
+
+## Openbox work-area reservation
+
+The panel marks its native GTK window as `_NET_WM_WINDOW_TYPE_DOCK` and publishes
+both `_NET_WM_STRUT` and `_NET_WM_STRUT_PARTIAL`. The reserved top depth and
+horizontal span are calculated from the effective panel geometry, including the
+configured `x`, `y`, width, and height.
+
+Openbox should then keep newly placed and maximized normal windows below the
+panel. Fullscreen applications may still cover it, which is intentional. Do not
+also configure a fixed top margin in Openbox, because combining a manual margin
+with the panel strut can reserve the space twice.
+
+The panel retries `xprop` briefly after showing the native window. If `xprop` is
+missing or cannot find the window, the panel continues running and prints a
+warning, but Openbox will not reserve the work area.
+
+To inspect the properties while the panel is running:
+
+```sh
+xprop -name "PiForma Panel" _NET_WM_WINDOW_TYPE _NET_WM_STRUT _NET_WM_STRUT_PARTIAL
+```
 
 ## Configuration
 
@@ -174,7 +199,7 @@ After editing the configuration, restart the app to apply window size, position,
 - `src-tauri/src/desktop_entries.rs` discovers and parses application launchers.
 - `src-tauri/src/launcher.rs` owns detached process launching helpers.
 - `src-tauri/src/window_manager.rs` tracks and restores the previously active desktop window.
-- `src-tauri/src/panel_window.rs` applies native geometry for the main panel window.
+- `src-tauri/src/panel_window.rs` applies native geometry, dock identity, and EWMH work-area reservation for the main panel window.
 - `src-tauri/src/popup_windows.rs` creates, sizes, and hides menu popup windows.
 - `src-tauri/src/system_actions.rs` owns desktop/system menu actions and confirmations.
 - `src-tauri/tauri.conf.json` defines window geometry and Debian bundle settings.
