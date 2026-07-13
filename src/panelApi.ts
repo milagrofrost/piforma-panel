@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { DesktopApp, MenuAction, PanelConfig, PanelState, RenderMenuPopupPayload } from "./panelModel";
+import type { ActionResult, BackendPanelAction, DesktopApp, MenuAction, PanelConfig, PanelState, RenderMenuPopupPayload } from "./panelModel";
 
 export async function frontendLog(message: string) {
   console.log(message);
@@ -92,31 +92,16 @@ export async function runMenuAction(action: MenuAction) {
   switch (action.kind) {
     case "placeholder":
       window.alert(action.message);
-      return;
-    case "show_about":
-      await invoke("show_about_piforma");
-      return;
-    case "launch_app":
-      await invoke("launch_app", { exec: action.exec, name: action.name });
-      return;
-    case "launch_calculator":
-      await invoke("launch_calculator");
-      return;
-    case "open_folder":
-      await invoke("open_folder", { folder: action.folder });
-      return;
-    case "new_terminal_window":
-      await invoke("new_terminal_window");
-      return;
-    case "send_shortcut":
-      await invoke("send_shortcut", { action: action.action });
-      return;
-    case "run_system_action":
-      await invoke("run_system_action", { action: action.action, confirmed: action.confirmed });
-      return;
+      return { success: true } satisfies ActionResult;
     case "confirmed_system_action":
-      await invoke("confirm_system_action", { action: action.action });
+      return await invoke<ActionResult>("confirm_system_action_result", { action: action.action });
+    default:
+      return await executePanelAction(action);
   }
+}
+
+async function executePanelAction(action: BackendPanelAction) {
+  return await invoke<ActionResult>("execute_panel_action", { action });
 }
 
 export async function onMenuActionSelected(

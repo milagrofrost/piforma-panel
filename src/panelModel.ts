@@ -65,9 +65,28 @@ export type MenuAction =
   | { kind: "launch_calculator" }
   | { kind: "open_folder"; folder: "applications" | "home" | "desktop" }
   | { kind: "new_terminal_window" }
-  | { kind: "send_shortcut"; action: string }
-  | { kind: "run_system_action"; action: string; confirmed: boolean }
+  | { kind: "send_shortcut"; action: ShortcutAction }
+  | { kind: "run_system_action"; action: SystemActionId; confirmed: boolean }
   | { kind: "confirmed_system_action"; action: "restart" | "shut_down"; message: string };
+
+export type BackendPanelAction = Exclude<MenuAction, { kind: "placeholder" } | { kind: "confirmed_system_action" }>;
+
+export type ShortcutAction = "undo" | "cut" | "copy" | "paste" | "clear" | "select_all";
+
+export type SystemActionId =
+  | "sleep_display"
+  | "show_desktop"
+  | "refresh"
+  | "clean_up_window"
+  | "restart"
+  | "shut_down"
+  | "show_clipboard";
+
+export type ActionResult = {
+  success: boolean;
+  message?: string;
+  error_kind?: "unsupported" | "cancelled" | "authorization_failed" | "command_failed" | "target_unavailable" | "invalid_request";
+};
 
 export type RenderMenuPopupPayload = {
   label: string;

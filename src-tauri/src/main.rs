@@ -1,6 +1,7 @@
 mod config;
 mod desktop_entries;
 mod launcher;
+mod panel_actions;
 mod panel_model;
 mod panel_window;
 mod popup_windows;
@@ -14,6 +15,7 @@ use launcher::{
     clean_exec_command, resolve_desktop_dir, run_short_command, spawn_detached,
     spawn_detached_shell, spawn_detached_with_fallbacks,
 };
+use panel_actions::{ActionResult, PanelAction};
 use panel_model::PanelGeometry;
 use panel_window::{configure_main_window, MAIN_WINDOW_MIN_HEIGHT, MAIN_WINDOW_MIN_WIDTH};
 use popup_windows::{
@@ -87,6 +89,8 @@ fn main() {
             send_shortcut,
             run_system_action,
             confirm_system_action,
+            confirm_system_action_result,
+            execute_panel_action,
         ])
         .run(tauri::generate_context!())
         .expect("error while running piforma-panel");
@@ -487,4 +491,18 @@ fn run_system_action(
 #[tauri::command]
 fn confirm_system_action(app: tauri::AppHandle, action: String) -> Result<(), String> {
     system_actions::confirm_system_action(&app, &action)
+}
+
+#[tauri::command]
+fn confirm_system_action_result(app: tauri::AppHandle, action: String) -> ActionResult {
+    system_actions::confirm_system_action_result(&app, &action)
+}
+
+#[tauri::command]
+fn execute_panel_action(
+    app: tauri::AppHandle,
+    memory: tauri::State<WindowMemory>,
+    action: PanelAction,
+) -> ActionResult {
+    panel_actions::execute_panel_action(&app, &memory, action)
 }

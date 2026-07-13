@@ -1,4 +1,4 @@
-import type { DesktopApp, MenuAction, MenuItem } from "./panelModel";
+import type { DesktopApp, MenuAction, MenuItem, ShortcutAction } from "./panelModel";
 
 export function appleMenu(applications: DesktopApp[], controlPanels: DesktopApp[]): MenuItem[] {
   return [
@@ -56,7 +56,7 @@ export function specialMenu(): MenuItem[] {
   ];
 }
 
-function shortcut(label: string, action: string): MenuItem {
+function shortcut(label: string, action: ShortcutAction): MenuItem {
   return { kind: "item", label, action: { kind: "send_shortcut", action } };
 }
 

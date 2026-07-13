@@ -402,7 +402,12 @@ export class PopupController {
 
   private async runMenuAction(action: MenuAction) {
     try {
-      await api.runMenuAction(action);
+      const result = await api.runMenuAction(action);
+      if (!result.success) {
+        const kind = result.error_kind ?? "unknown";
+        const message = result.message ?? "panel action failed";
+        await api.frontendLog(`menu action failed: ${kind}: ${message}`);
+      }
     } catch (error) {
       await api.frontendLog(`menu action failed: ${serializeLogValue(error)}`);
     }

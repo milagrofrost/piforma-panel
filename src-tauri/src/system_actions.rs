@@ -1,3 +1,4 @@
+use crate::panel_actions::{ActionErrorKind, ActionResult};
 use crate::{
     config::ensure_config,
     launcher::{
@@ -7,10 +8,12 @@ use crate::{
     popup_windows::hide_menu_popup_window,
     window_manager::{activate_remembered_window, WindowMemory},
 };
+use serde::{Deserialize, Serialize};
 use std::process::{Command, Stdio};
 
-#[derive(Debug, Clone, Copy)]
-enum SystemAction {
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SystemActionId {
     SleepDisplay,
     ShowDesktop,
     Refresh,
@@ -27,38 +30,52 @@ pub fn run_system_action(
     confirmed: bool,
 ) -> Result<(), String> {
     let action = parse_system_action(action)?;
+    run_system_action_id(app, memory, action, confirmed).into_legacy_result()
+}
+
+pub fn run_system_action_id(
+    app: &tauri::AppHandle,
+    memory: &tauri::State<WindowMemory>,
+    action: SystemActionId,
+    confirmed: bool,
+) -> ActionResult {
     match action {
-        SystemAction::SleepDisplay => spawn_short_with_fallbacks(&[
-            vec![
-                "xset".to_string(),
-                "dpms".to_string(),
-                "force".to_string(),
-                "off".to_string(),
-            ],
-            vec!["xset".to_string(), "s".to_string(), "activate".to_string()],
-        ]),
-        SystemAction::ShowDesktop => {
+        SystemActionId::SleepDisplay => {
+            ActionResult::from_command_result(spawn_short_with_fallbacks(&[
+                vec![
+                    "xset".to_string(),
+                    "dpms".to_string(),
+                    "force".to_string(),
+                    "off".to_string(),
+                ],
+                vec!["xset".to_string(), "s".to_string(), "activate".to_string()],
+            ]))
+        }
+        SystemActionId::ShowDesktop => {
             hide_menu_popup_window(app, true);
-            spawn_short_with_fallbacks(&[
+            ActionResult::from_command_result(spawn_short_with_fallbacks(&[
                 vec!["wmctrl".to_string(), "-k".to_string(), "on".to_string()],
                 vec![
                     "xdotool".to_string(),
                     "key".to_string(),
                     "Super+d".to_string(),
                 ],
-            ])
+            ]))
         }
-        SystemAction::Refresh => {
+        SystemActionId::Refresh => {
             hide_menu_popup_window(app, true);
             if activate_remembered_window(memory).is_ok() {
-                run_short_command("xdotool", &["key", "F5"])
+                ActionResult::from_command_result(run_short_command("xdotool", &["key", "F5"]))
             } else {
-                run_short_command("xrefresh", &[])
+                ActionResult::from_command_result(run_short_command("xrefresh", &[]))
             }
         }
-        SystemAction::CleanUpWindow => {
+        SystemActionId::CleanUpWindow => {
             hide_menu_popup_window(app, true);
-            let config = ensure_config()?;
+            let config = match ensure_config() {
+                Ok(config) => config,
+                Err(err) => return ActionResult::failure(ActionErrorKind::InvalidRequest, err),
+            };
             if let Err(err) = activate_remembered_window(memory) {
                 eprintln!("clean up window: no remembered target to reactivate: {err}");
             }
@@ -66,66 +83,90 @@ pub fn run_system_action(
                 let _ = run_short_command("xdotool", &["key", "F5"]);
             }
             if config.actions.clean_up_window_command.trim().is_empty() {
-                Ok(())
+                ActionResult::success(None)
             } else {
-                spawn_detached_shell(&config.actions.clean_up_window_command)
+                ActionResult::from_command_result(spawn_detached_shell(
+                    &config.actions.clean_up_window_command,
+                ))
             }
         }
-        SystemAction::ShowClipboard => show_clipboard(),
-        SystemAction::Restart => {
+        SystemActionId::ShowClipboard => ActionResult::from_command_result(show_clipboard()),
+        SystemActionId::Restart => {
             if !confirmed {
-                return Err("restart requires confirmation".to_string());
+                return ActionResult::failure(
+                    ActionErrorKind::InvalidRequest,
+                    "restart requires confirmation",
+                );
             }
-            run_short_with_fallbacks(&[
+            ActionResult::from_command_result(run_short_with_fallbacks(&[
                 vec!["systemctl".to_string(), "reboot".to_string()],
                 vec!["loginctl".to_string(), "reboot".to_string()],
-            ])
+            ]))
         }
-        SystemAction::ShutDown => {
+        SystemActionId::ShutDown => {
             if !confirmed {
-                return Err("shutdown requires confirmation".to_string());
+                return ActionResult::failure(
+                    ActionErrorKind::InvalidRequest,
+                    "shutdown requires confirmation",
+                );
             }
-            run_short_with_fallbacks(&[
+            ActionResult::from_command_result(run_short_with_fallbacks(&[
                 vec!["systemctl".to_string(), "poweroff".to_string()],
                 vec!["loginctl".to_string(), "poweroff".to_string()],
-            ])
+            ]))
         }
     }
 }
 
 pub fn confirm_system_action(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
+    confirm_system_action_result(app, action).into_legacy_result()
+}
+
+pub fn confirm_system_action_result(app: &tauri::AppHandle, action: &str) -> ActionResult {
     hide_menu_popup_window(app, true);
 
-    let action = parse_system_action(action)?;
+    let action = match parse_system_action(action) {
+        Ok(action) => action,
+        Err(err) => return ActionResult::failure(ActionErrorKind::InvalidRequest, err),
+    };
     let confirmation = match action {
-        SystemAction::Restart => ConfirmationSpec {
+        SystemActionId::Restart => ConfirmationSpec {
             title: "Restart",
             text: "Are you sure you want to restart PiForma?",
             ok_label: "Restart",
             xmessage_buttons: "Cancel:1,Restart:0",
         },
-        SystemAction::ShutDown => ConfirmationSpec {
+        SystemActionId::ShutDown => ConfirmationSpec {
             title: "Shut Down",
             text: "Are you sure you want to shut down PiForma?",
             ok_label: "Shut Down",
             xmessage_buttons: "Cancel:1,Shut Down:0",
         },
-        _ => return Err("confirmation is only supported for restart and shut_down".to_string()),
+        _ => {
+            return ActionResult::failure(
+                ActionErrorKind::InvalidRequest,
+                "confirmation is only supported for restart and shut_down",
+            )
+        }
     };
 
-    if !confirm_with_desktop_dialog(&confirmation)? {
-        return Ok(());
+    let confirmed = match confirm_with_desktop_dialog(&confirmation) {
+        Ok(confirmed) => confirmed,
+        Err(err) => return ActionResult::failure(ActionErrorKind::CommandFailed, err),
+    };
+    if !confirmed {
+        return ActionResult::failure(ActionErrorKind::Cancelled, "action cancelled");
     }
 
     match action {
-        SystemAction::Restart => run_short_with_fallbacks(&[
+        SystemActionId::Restart => ActionResult::from_command_result(run_short_with_fallbacks(&[
             vec!["systemctl".to_string(), "reboot".to_string()],
             vec!["loginctl".to_string(), "reboot".to_string()],
-        ]),
-        SystemAction::ShutDown => run_short_with_fallbacks(&[
+        ])),
+        SystemActionId::ShutDown => ActionResult::from_command_result(run_short_with_fallbacks(&[
             vec!["systemctl".to_string(), "poweroff".to_string()],
             vec!["loginctl".to_string(), "poweroff".to_string()],
-        ]),
+        ])),
         _ => unreachable!("non-power actions returned before confirmation"),
     }
 }
@@ -193,15 +234,15 @@ fn confirm_with_desktop_dialog(spec: &ConfirmationSpec) -> Result<bool, String> 
     ))
 }
 
-fn parse_system_action(action: &str) -> Result<SystemAction, String> {
+fn parse_system_action(action: &str) -> Result<SystemActionId, String> {
     match action {
-        "sleep_display" => Ok(SystemAction::SleepDisplay),
-        "show_desktop" => Ok(SystemAction::ShowDesktop),
-        "refresh" => Ok(SystemAction::Refresh),
-        "clean_up_window" => Ok(SystemAction::CleanUpWindow),
-        "restart" => Ok(SystemAction::Restart),
-        "shut_down" => Ok(SystemAction::ShutDown),
-        "show_clipboard" => Ok(SystemAction::ShowClipboard),
+        "sleep_display" => Ok(SystemActionId::SleepDisplay),
+        "show_desktop" => Ok(SystemActionId::ShowDesktop),
+        "refresh" => Ok(SystemActionId::Refresh),
+        "clean_up_window" => Ok(SystemActionId::CleanUpWindow),
+        "restart" => Ok(SystemActionId::Restart),
+        "shut_down" => Ok(SystemActionId::ShutDown),
+        "show_clipboard" => Ok(SystemActionId::ShowClipboard),
         _ => Err(format!("unknown system action: {action}")),
     }
 }
