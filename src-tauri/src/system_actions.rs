@@ -15,6 +15,7 @@ use std::process::{Command, Stdio};
 #[serde(rename_all = "snake_case")]
 pub enum SystemActionId {
     SleepDisplay,
+    ShowAllWindows,
     ShowDesktop,
     Refresh,
     CleanUpWindow,
@@ -40,27 +41,19 @@ pub fn run_system_action_id(
     confirmed: bool,
 ) -> ActionResult {
     match action {
-        SystemActionId::SleepDisplay => {
-            ActionResult::from_command_result(spawn_short_with_fallbacks(&[
-                vec![
-                    "xset".to_string(),
-                    "dpms".to_string(),
-                    "force".to_string(),
-                    "off".to_string(),
-                ],
+        SystemActionId::SleepDisplay => ActionResult::from_command_result(
+            spawn_short_with_fallbacks(&[
+                vec!["xset".to_string(), "dpms".to_string(), "force".to_string(), "off".to_string()],
                 vec!["xset".to_string(), "s".to_string(), "activate".to_string()],
-            ]))
+            ]),
+        ),
+        SystemActionId::ShowAllWindows => {
+            hide_menu_popup_window(app, true);
+            ActionResult::from_command_result(crate::window_management::show_all_windows())
         }
         SystemActionId::ShowDesktop => {
             hide_menu_popup_window(app, true);
-            ActionResult::from_command_result(spawn_short_with_fallbacks(&[
-                vec!["wmctrl".to_string(), "-k".to_string(), "on".to_string()],
-                vec![
-                    "xdotool".to_string(),
-                    "key".to_string(),
-                    "Super+d".to_string(),
-                ],
-            ]))
+            ActionResult::from_command_result(crate::window_management::toggle_show_desktop())
         }
         SystemActionId::Refresh => {
             hide_menu_popup_window(app, true);
@@ -237,6 +230,7 @@ fn confirm_with_desktop_dialog(spec: &ConfirmationSpec) -> Result<bool, String> 
 fn parse_system_action(action: &str) -> Result<SystemActionId, String> {
     match action {
         "sleep_display" => Ok(SystemActionId::SleepDisplay),
+        "show_all_windows" => Ok(SystemActionId::ShowAllWindows),
         "show_desktop" => Ok(SystemActionId::ShowDesktop),
         "refresh" => Ok(SystemActionId::Refresh),
         "clean_up_window" => Ok(SystemActionId::CleanUpWindow),
