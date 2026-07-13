@@ -11,6 +11,8 @@
   --classic-shadow: rgb(153, 153, 153);
   --classic-border: rgb(0, 0, 0);
   --classic-separator: rgb(102, 102, 102);
+  --menu-shadow-x: 2px;
+  --menu-shadow-y: 1px;
 }
 
 :root,
@@ -58,6 +60,8 @@ body.popup-window {
 body.popup-window #app {
   display: inline-block;
   line-height: 0;
+  padding-right: var(--menu-shadow-x);
+  padding-bottom: var(--menu-shadow-y);
 }
 
 html:has(> body.flyout-window),
@@ -71,6 +75,12 @@ body.flyout-window #app {
   height: max-content;
   min-height: 0;
   max-height: none;
+}
+
+body.flyout-window #app {
+  padding-right: var(--menu-shadow-x);
+  padding-bottom: var(--menu-shadow-y);
+  overflow: hidden;
 }
 
 button {
@@ -190,7 +200,7 @@ button {
   box-shadow:
     inset 1px 1px 0 var(--classic-highlight),
     inset -1px -1px 0 var(--classic-shadow),
-    2px 1px 0 rgba(0, 0, 0, 0.72);
+    var(--menu-shadow-x) var(--menu-shadow-y) 0 rgba(0, 0, 0, 0.72);
   font-family: var(--panel-font), "Chicago", "Geneva", "Tahoma", sans-serif;
   font-size: var(--panel-font-size);
   font-weight: 400;
