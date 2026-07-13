@@ -2,8 +2,7 @@ use crate::panel_actions::{ActionErrorKind, ActionResult};
 use crate::{
     config::ensure_config,
     launcher::{
-        command_exists, run_short_command, run_short_with_fallbacks, spawn_detached_shell,
-        spawn_short_with_fallbacks,
+        command_exists, run_short_command, spawn_detached_shell, spawn_short_with_fallbacks,
     },
     popup_windows::hide_menu_popup_window,
     window_manager::{activate_remembered_window, WindowMemory},
@@ -25,6 +24,12 @@ pub enum SystemActionId {
     Restart,
     ShutDown,
     ShowClipboard,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PowerAction {
+    Restart,
+    ShutDown,
 }
 
 pub fn run_system_action(
@@ -88,28 +93,24 @@ pub fn run_system_action_id(
         }
         SystemActionId::ShowClipboard => ActionResult::from_command_result(show_clipboard()),
         SystemActionId::Restart => {
+            hide_menu_popup_window(app, true);
             if !confirmed {
                 return ActionResult::failure(
                     ActionErrorKind::InvalidRequest,
-                    "restart requires confirmation",
+                    "restart was not explicitly selected",
                 );
             }
-            ActionResult::from_command_result(run_short_with_fallbacks(&[
-                vec!["systemctl".to_string(), "reboot".to_string()],
-                vec!["loginctl".to_string(), "reboot".to_string()],
-            ]))
+            run_power_action(PowerAction::Restart)
         }
         SystemActionId::ShutDown => {
+            hide_menu_popup_window(app, true);
             if !confirmed {
                 return ActionResult::failure(
                     ActionErrorKind::InvalidRequest,
-                    "shutdown requires confirmation",
+                    "shutdown was not explicitly selected",
                 );
             }
-            ActionResult::from_command_result(run_short_with_fallbacks(&[
-                vec!["systemctl".to_string(), "poweroff".to_string()],
-                vec!["loginctl".to_string(), "poweroff".to_string()],
-            ]))
+            run_power_action(PowerAction::ShutDown)
         }
     }
 }
@@ -155,16 +156,94 @@ pub fn confirm_system_action_result(app: &tauri::AppHandle, action: &str) -> Act
     }
 
     match action {
-        SystemActionId::Restart => ActionResult::from_command_result(run_short_with_fallbacks(&[
-            vec!["systemctl".to_string(), "reboot".to_string()],
-            vec!["loginctl".to_string(), "reboot".to_string()],
-        ])),
-        SystemActionId::ShutDown => ActionResult::from_command_result(run_short_with_fallbacks(&[
-            vec!["systemctl".to_string(), "poweroff".to_string()],
-            vec!["loginctl".to_string(), "poweroff".to_string()],
-        ])),
+        SystemActionId::Restart => run_power_action(PowerAction::Restart),
+        SystemActionId::ShutDown => run_power_action(PowerAction::ShutDown),
         _ => unreachable!("non-power actions returned before confirmation"),
     }
+}
+
+fn run_power_action(action: PowerAction) -> ActionResult {
+    let verb = match action {
+        PowerAction::Restart => "reboot",
+        PowerAction::ShutDown => "poweroff",
+    };
+    let label = match action {
+        PowerAction::Restart => "restart",
+        PowerAction::ShutDown => "shut down",
+    };
+    let commands = [
+        ("systemctl", vec!["--no-ask-password", verb]),
+        ("loginctl", vec!["--no-ask-password", verb]),
+    ];
+
+    let mut errors = Vec::new();
+    let mut authorization_failed = false;
+
+    for (program, args) in commands {
+        if !command_exists(program) {
+            errors.push(format!("{program} not found"));
+            continue;
+        }
+
+        let output = match Command::new(program)
+            .args(&args)
+            .stdin(Stdio::null())
+            .output()
+        {
+            Ok(output) => output,
+            Err(err) => {
+                errors.push(format!("failed to run {program}: {err}"));
+                continue;
+            }
+        };
+
+        if output.status.success() {
+            return ActionResult::success(Some(format!("system {label} requested")));
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let details = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("exited with status {}", output.status)
+        };
+        if is_authorization_error(&details) {
+            authorization_failed = true;
+        }
+        errors.push(format!("{program} {}: {details}", args.join(" ")));
+    }
+
+    let message = format!(
+        "could not {label} the system: {}",
+        if errors.is_empty() {
+            "no supported power command is available".to_string()
+        } else {
+            errors.join("; ")
+        }
+    );
+
+    if authorization_failed {
+        ActionResult::failure(ActionErrorKind::AuthorizationFailed, message)
+    } else {
+        ActionResult::failure(ActionErrorKind::CommandFailed, message)
+    }
+}
+
+fn is_authorization_error(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    [
+        "access denied",
+        "authentication is required",
+        "interactive authentication required",
+        "not authorized",
+        "not permitted",
+        "permission denied",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
 }
 
 struct ConfirmationSpec {
@@ -272,4 +351,22 @@ else
 fi
 "#;
     spawn_detached_shell(command)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_common_authorization_errors() {
+        for message in [
+            "Access denied",
+            "Authentication is required",
+            "Interactive authentication required",
+            "Permission denied",
+        ] {
+            assert!(is_authorization_error(message));
+        }
+        assert!(!is_authorization_error("connection timed out"));
+    }
 }
