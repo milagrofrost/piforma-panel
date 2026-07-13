@@ -1,8 +1,12 @@
-use crate::launcher::{
-    command_exists, command_stdout, run_short_command, spawn_detached_with_fallbacks,
+use crate::{
+    config::config_path,
+    launcher::{
+        command_exists, command_stdout, run_short_command, spawn_detached_shell,
+        spawn_detached_with_fallbacks,
+    },
 };
-use serde::Serialize;
-use std::process::{Command, Stdio};
+use serde::{Deserialize, Serialize};
+use std::{fs, process::{Command, Stdio}};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SystemStatus {
@@ -10,6 +14,19 @@ pub struct SystemStatus {
     pub internet_available: bool,
     pub volume: u8,
     pub audio_available: bool,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct SystemStatusConfig {
+    network_manager: NetworkManagerConfig,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct NetworkManagerConfig {
+    #[serde(alias = "override", alias = "network_manager_override", alias = "command")]
+    override_command: String,
 }
 
 pub fn get_system_status() -> SystemStatus {
@@ -71,6 +88,10 @@ pub fn set_system_volume(volume: u8) -> Result<(), String> {
 }
 
 pub fn open_network_settings() -> Result<(), String> {
+    if let Some(command) = network_manager_override() {
+        return spawn_detached_shell(&command);
+    }
+
     spawn_detached_with_fallbacks(&[
         vec!["nm-connection-editor".to_string()],
         vec!["connman-gtk".to_string()],
@@ -82,6 +103,14 @@ pub fn open_network_settings() -> Result<(), String> {
         ],
         vec!["lxterminal".to_string(), "-e".to_string(), "nmtui".to_string()],
     ])
+}
+
+fn network_manager_override() -> Option<String> {
+    let path = config_path().ok()?;
+    let contents = fs::read_to_string(path).ok()?;
+    let config: SystemStatusConfig = serde_yaml::from_str(&contents).ok()?;
+    let command = config.network_manager.override_command.trim();
+    (!command.is_empty()).then(|| command.to_string())
 }
 
 fn active_wifi_ssid() -> Option<String> {
@@ -234,5 +263,17 @@ mod tests {
     #[test]
     fn unescapes_nmcli_ssid() {
         assert_eq!(unescape_nmcli_value("Green\\:Ice"), "Green:Ice");
+    }
+
+    #[test]
+    fn parses_network_manager_override_aliases() {
+        for yaml in [
+            "network_manager:\n  override_command: nm-connection-editor\n",
+            "network_manager:\n  override: nm-connection-editor\n",
+            "network_manager:\n  network_manager_override: nm-connection-editor\n",
+        ] {
+            let config: SystemStatusConfig = serde_yaml::from_str(yaml).expect("config should parse");
+            assert_eq!(config.network_manager.override_command, "nm-connection-editor");
+        }
     }
 }
