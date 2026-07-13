@@ -145,7 +145,13 @@ After editing the configuration, restart the app to apply window size, position,
 
 ## Source Layout
 
-- `src/main.ts` builds the menu bar UI and calls Tauri commands.
+- `src/main.ts` bootstraps the frontend and composes UI modules.
+- `src/panelModel.ts` defines frontend-facing config, menu, popup, and launcher types.
+- `src/panelApi.ts` wraps Tauri commands and events.
+- `src/menuDefinitions.ts` owns static menu item definitions.
+- `src/menuRenderer.ts` renders panel and popup menu DOM.
+- `src/popupController.ts` owns popup state, coordination, and menu interactions.
+- `src/clock.ts` owns clock formatting and update scheduling.
 - `src/styles.css` contains the classic panel and menu styling.
 - `src-tauri/src/main.rs` registers Tauri commands and composes backend modules.
 - `src-tauri/src/config.rs` owns configuration defaults, loading, validation, and path handling.

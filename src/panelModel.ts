@@ -1,0 +1,91 @@
+export type PanelConfig = {
+  bar: {
+    width: number;
+    height: number;
+    x: number;
+    y: number;
+    radius_top_left: number;
+    radius_top_right: number;
+    font_family: string;
+    font_size: number;
+  };
+  clock: {
+    enabled: boolean;
+    format: string;
+  };
+  applications: {
+    max_menu_height: number;
+  };
+  menus: {
+    show_file: boolean;
+    show_edit: boolean;
+    show_view: boolean;
+    show_special: boolean;
+  };
+};
+
+export type DesktopApp = {
+  id: string;
+  name: string;
+  exec: string;
+  icon?: string;
+  categories: string[];
+  group: string;
+  is_control_panel: boolean;
+};
+
+export type MenuItem =
+  | { kind: "item"; label: string; action: MenuAction; enabled?: boolean }
+  | { kind: "submenu"; label: string; submenu: SubmenuKind; items: MenuItem[] }
+  | { kind: "separator" };
+
+export type MenuAction =
+  | { kind: "placeholder"; message: string }
+  | { kind: "show_about" }
+  | { kind: "launch_app"; exec: string; name: string }
+  | { kind: "launch_calculator" }
+  | { kind: "open_folder"; folder: "applications" | "home" | "desktop" }
+  | { kind: "new_terminal_window" }
+  | { kind: "send_shortcut"; action: string }
+  | { kind: "run_system_action"; action: string; confirmed: boolean }
+  | { kind: "confirmed_system_action"; action: "restart" | "shut_down"; message: string };
+
+export type RenderMenuPopupPayload = {
+  label: string;
+  submenu?: SubmenuKind;
+  items: MenuItem[];
+  width: number;
+  height: number;
+  x: number;
+  y: number;
+};
+
+export type PopupMode = "main" | "menu" | "flyout";
+export type SubmenuKind = "applications" | "control_panels";
+
+export type PopupGeometry = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export function detectPopupMode(search: string): PopupMode {
+  const params = new URLSearchParams(search);
+  const popupParam = params.get("popup");
+  return popupParam === "menu" || popupParam === "flyout" ? popupParam : "main";
+}
+
+export function serializeLogValue(value: unknown) {
+  if (value instanceof Error) {
+    return `${value.name}: ${value.message}`;
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
