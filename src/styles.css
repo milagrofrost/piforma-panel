@@ -77,7 +77,13 @@ body.flyout-window #app {
   max-height: none;
 }
 
+body.flyout-window {
+  display: inline-block;
+}
+
 body.flyout-window #app {
+  display: inline-block;
+  line-height: 0;
   padding-right: var(--menu-shadow-x);
   padding-bottom: var(--menu-shadow-y);
   overflow: hidden;
@@ -207,7 +213,8 @@ button {
   line-height: 16px;
 }
 
-.popup-window .menu {
+.popup-window .menu,
+.flyout-window .menu {
   position: relative;
   top: 0;
   left: 0;
@@ -218,9 +225,6 @@ button {
 }
 
 .flyout-window .menu {
-  position: relative;
-  top: 1px;
-  display: block;
   overflow-x: visible;
 }
 
