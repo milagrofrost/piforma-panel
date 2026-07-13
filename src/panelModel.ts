@@ -24,6 +24,25 @@ export type PanelConfig = {
   };
 };
 
+export type PanelGeometry = {
+  monitor_id?: string | null;
+  monitor_origin_x: number;
+  monitor_origin_y: number;
+  monitor_width?: number | null;
+  monitor_height?: number | null;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  scale_factor: number;
+  coordinate_space: string;
+};
+
+export type PanelState = {
+  config: PanelConfig;
+  geometry: PanelGeometry;
+};
+
 export type DesktopApp = {
   id: string;
   name: string;

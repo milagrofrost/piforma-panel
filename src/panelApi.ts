@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { DesktopApp, MenuAction, PanelConfig, RenderMenuPopupPayload } from "./panelModel";
+import type { DesktopApp, MenuAction, PanelConfig, PanelState, RenderMenuPopupPayload } from "./panelModel";
 
 export async function frontendLog(message: string) {
   console.log(message);
@@ -15,6 +15,10 @@ export async function frontendLog(message: string) {
 
 export async function getConfig() {
   return await invoke<PanelConfig>("get_config");
+}
+
+export async function getPanelState() {
+  return await invoke<PanelState>("get_panel_state");
 }
 
 export async function initializeMainWindow() {

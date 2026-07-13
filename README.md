@@ -155,6 +155,7 @@ After editing the configuration, restart the app to apply window size, position,
 - `src/styles.css` contains the classic panel and menu styling.
 - `src-tauri/src/main.rs` registers Tauri commands and composes backend modules.
 - `src-tauri/src/config.rs` owns configuration defaults, loading, validation, and path handling.
+- `src-tauri/src/panel_model.rs` defines effective panel geometry and reusable popup/strut coordinate helpers.
 - `src-tauri/src/desktop_entries.rs` discovers and parses application launchers.
 - `src-tauri/src/launcher.rs` owns detached process launching helpers.
 - `src-tauri/src/window_manager.rs` tracks and restores the previously active desktop window.

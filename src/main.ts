@@ -28,7 +28,8 @@ function markFrontendLoaded() {
 
 async function init() {
   const popupMode = detectPopupMode(window.location.search);
-  const config = await api.getConfig();
+  const panelState = await api.getPanelState();
+  const { config, geometry } = panelState;
   const frontendLogAvailable = await api.frontendLog("frontend init start");
   if (!frontendLogAvailable) {
     console.error("frontend init start failed to reach Rust frontend_log");
@@ -36,8 +37,8 @@ async function init() {
     document.documentElement.dataset.debug = "frontend-log-failed";
   }
   if (popupMode === "main") {
-    document.documentElement.style.setProperty("--bar-width", `${config.bar.width}px`);
-    document.documentElement.style.setProperty("--bar-height", `${config.bar.height}px`);
+    document.documentElement.style.setProperty("--bar-width", `${geometry.width}px`);
+    document.documentElement.style.setProperty("--bar-height", `${geometry.height}px`);
   }
   document.documentElement.style.setProperty("--radius-tl", `${config.bar.radius_top_left}px`);
   document.documentElement.style.setProperty("--radius-tr", `${config.bar.radius_top_right}px`);
@@ -45,7 +46,7 @@ async function init() {
   document.documentElement.style.setProperty("--panel-font-size", `${config.bar.font_size}px`);
   document.documentElement.style.setProperty("--menu-max-height", `${config.applications.max_menu_height}px`);
 
-  const popupController = new PopupController(appRoot, config, popupMode);
+  const popupController = new PopupController(appRoot, config, geometry, popupMode);
   popupController.installGlobalMenuListeners();
 
   if (popupMode === "menu") {

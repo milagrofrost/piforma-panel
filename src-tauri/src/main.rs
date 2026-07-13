@@ -1,6 +1,7 @@
 mod config;
 mod desktop_entries;
 mod launcher;
+mod panel_model;
 mod panel_window;
 mod popup_windows;
 mod system_actions;
@@ -13,6 +14,7 @@ use launcher::{
     clean_exec_command, resolve_desktop_dir, run_short_command, spawn_detached,
     spawn_detached_shell, spawn_detached_with_fallbacks,
 };
+use panel_model::PanelGeometry;
 use panel_window::{configure_main_window, MAIN_WINDOW_MIN_HEIGHT, MAIN_WINDOW_MIN_WIDTH};
 use popup_windows::{
     ensure_menu_flyout_window, ensure_menu_popup_window, hide_menu_flyout_window,
@@ -38,6 +40,12 @@ struct BuildInfo {
     dirty: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct PanelState {
+    config: config::PanelConfig,
+    geometry: PanelGeometry,
+}
+
 fn main() {
     print_build_info();
     print_tauri_asset_diagnostics();
@@ -56,6 +64,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_build_info,
             get_config,
+            get_panel_state,
             get_apple_logo_data_url,
             initialize_main_window,
             frontend_log,
@@ -143,6 +152,14 @@ fn get_build_info() -> BuildInfo {
 #[tauri::command]
 fn get_config() -> Result<config::PanelConfig, String> {
     ensure_config()
+}
+
+#[tauri::command]
+fn get_panel_state(app: tauri::AppHandle) -> Result<PanelState, String> {
+    let config = ensure_config()?;
+    let geometry =
+        panel_window::effective_panel_geometry(app.get_webview_window("main").as_ref(), &config)?;
+    Ok(PanelState { config, geometry })
 }
 
 #[tauri::command]

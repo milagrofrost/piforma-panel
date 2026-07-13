@@ -1,6 +1,6 @@
 import * as api from "./panelApi";
 import { renderPanel, buildMenu, measureMenu } from "./menuRenderer";
-import type { DesktopApp, MenuAction, MenuItem, PanelConfig, PopupGeometry, PopupMode, RenderMenuPopupPayload, SubmenuKind } from "./panelModel";
+import type { DesktopApp, MenuAction, MenuItem, PanelConfig, PanelGeometry, PopupGeometry, PopupMode, RenderMenuPopupPayload, SubmenuKind } from "./panelModel";
 import { serializeLogValue } from "./panelModel";
 
 const DEBUG_EVENT_DIAGNOSTICS = false;
@@ -17,6 +17,7 @@ export class PopupController {
   constructor(
     private readonly root: HTMLElement,
     private readonly config: PanelConfig,
+    private readonly geometry: PanelGeometry,
     private readonly popupMode: PopupMode
   ) {}
 
@@ -149,8 +150,8 @@ export class PopupController {
     const rect = button.getBoundingClientRect();
     const menu = measureMenu(items);
     const label = button.getAttribute("aria-label") ?? button.textContent ?? "Menu";
-    const x = this.config.bar.x + Math.floor(rect.left);
-    const y = this.config.bar.y + this.config.bar.height;
+    const x = this.geometry.x + Math.floor(rect.left);
+    const y = this.geometry.y + this.geometry.height;
     await api.frontendLog(`menu label=${label}`);
     await api.frontendLog(`menu item count=${items.length}`);
     await api.frontendLog(`measured menu width=${menu.width}, height=${menu.height}`);

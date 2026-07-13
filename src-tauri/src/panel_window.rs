@@ -1,4 +1,7 @@
-use crate::config::{config_dimension, PanelConfig};
+use crate::{
+    config::PanelConfig,
+    panel_model::{MonitorGeometry, PanelGeometry},
+};
 use gtk::prelude::{ContainerExt, GtkWindowExt, WidgetExt};
 
 pub const MAIN_WINDOW_MIN_WIDTH: u32 = 1;
@@ -8,9 +11,9 @@ pub fn configure_main_window(
     window: &tauri::WebviewWindow,
     config: &PanelConfig,
     phase: &str,
-) -> Result<(), String> {
-    let width = config_dimension(config.bar.width, "bar.width")?;
-    let height = config_dimension(config.bar.height, "bar.height")?;
+) -> Result<PanelGeometry, String> {
+    let geometry = effective_panel_geometry(Some(window), config)?;
+    log_panel_geometry(config, &geometry);
     window.set_resizable(true).map_err(|err| err.to_string())?;
     window
         .set_min_size(Some(tauri::Size::Physical(tauri::PhysicalSize {
@@ -22,18 +25,70 @@ pub fn configure_main_window(
         .set_max_size(Option::<tauri::Size>::None)
         .map_err(|err| err.to_string())?;
     window
-        .set_size(tauri::Size::Physical(tauri::PhysicalSize { width, height }))
+        .set_size(tauri::Size::Physical(tauri::PhysicalSize {
+            width: geometry.width,
+            height: geometry.height,
+        }))
         .map_err(|err| err.to_string())?;
-    apply_main_gtk_size(window, width, height)?;
+    apply_main_gtk_size(window, geometry.width, geometry.height)?;
     window
         .set_position(tauri::Position::Physical(tauri::PhysicalPosition {
-            x: config.bar.x,
-            y: config.bar.y,
+            x: geometry.x,
+            y: geometry.y,
         }))
         .map_err(|err| err.to_string())?;
     log_main_window_actual_size(window, phase);
     window.show().map_err(|err| err.to_string())?;
-    window.set_resizable(false).map_err(|err| err.to_string())
+    window.set_resizable(false).map_err(|err| err.to_string())?;
+    Ok(geometry)
+}
+
+pub fn effective_panel_geometry(
+    window: Option<&tauri::WebviewWindow>,
+    config: &PanelConfig,
+) -> Result<PanelGeometry, String> {
+    PanelGeometry::from_config(config, window.and_then(monitor_geometry))
+}
+
+fn monitor_geometry(window: &tauri::WebviewWindow) -> Option<MonitorGeometry> {
+    let Ok(Some(monitor)) = window.current_monitor() else {
+        return None;
+    };
+    Some(MonitorGeometry {
+        id: monitor.name().map(ToString::to_string),
+        origin_x: monitor.position().x,
+        origin_y: monitor.position().y,
+        width: Some(monitor.size().width),
+        height: Some(monitor.size().height),
+        scale_factor: monitor.scale_factor(),
+    })
+}
+
+fn log_panel_geometry(config: &PanelConfig, geometry: &PanelGeometry) {
+    println!(
+        "panel geometry configured: x={}, y={}, width={}, height={}",
+        config.bar.x, config.bar.y, config.bar.width, config.bar.height
+    );
+    println!(
+        "panel geometry effective: x={}, y={}, width={}, height={}, monitor_id={}, monitor_origin={},{} monitor_size={}x{}, scale_factor={}, coordinate_space={}",
+        geometry.x,
+        geometry.y,
+        geometry.width,
+        geometry.height,
+        geometry.monitor_id.as_deref().unwrap_or("unknown"),
+        geometry.monitor_origin_x,
+        geometry.monitor_origin_y,
+        geometry
+            .monitor_width
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string()),
+        geometry
+            .monitor_height
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string()),
+        geometry.scale_factor,
+        geometry.coordinate_space
+    );
 }
 
 fn apply_main_gtk_size(
