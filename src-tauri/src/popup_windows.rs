@@ -8,6 +8,8 @@ use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub const PRIMARY_MENU_POPUP_LABEL: &str = "menu-popup";
 pub const FLYOUT_MENU_POPUP_LABEL: &str = "menu-flyout";
+const MENU_SHADOW_WIDTH: u32 = 2;
+const MENU_SHADOW_HEIGHT: u32 = 1;
 
 pub fn ensure_menu_popup_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
     ensure_popup_window(app, ShellWindowRole::MenuPopup, "index.html?popup=menu")
@@ -60,11 +62,9 @@ pub fn hide_menu_popup_window(app: &tauri::AppHandle, emit_closed: bool) {
     if let Some(window) = app.get_webview_window(PRIMARY_MENU_POPUP_LABEL) {
         if let Err(err) = window.hide() {
             eprintln!("failed to hide primary menu popup: {err}");
-        } else {
-            if diagnostics::verbose_from_env() {
-                println!("primary menu popup hidden");
-                log_popup_actual_size_unchecked(&window, PRIMARY_MENU_POPUP_LABEL, "hidden");
-            }
+        } else if diagnostics::verbose_from_env() {
+            println!("primary menu popup hidden");
+            log_popup_actual_size_unchecked(&window, PRIMARY_MENU_POPUP_LABEL, "hidden");
         }
     }
     if emit_closed {
@@ -78,11 +78,9 @@ pub fn hide_menu_flyout_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window(FLYOUT_MENU_POPUP_LABEL) {
         if let Err(err) = window.hide() {
             eprintln!("failed to hide flyout menu popup: {err}");
-        } else {
-            if diagnostics::verbose_from_env() {
-                println!("flyout hidden");
-                log_popup_actual_size_unchecked(&window, FLYOUT_MENU_POPUP_LABEL, "hidden");
-            }
+        } else if diagnostics::verbose_from_env() {
+            println!("flyout hidden");
+            log_popup_actual_size_unchecked(&window, FLYOUT_MENU_POPUP_LABEL, "hidden");
         }
     }
 }
@@ -92,6 +90,9 @@ pub fn resize_menu_popup_window(
     width: u32,
     height: u32,
 ) -> Result<(), String> {
+    let window_width = width.saturating_add(MENU_SHADOW_WIDTH);
+    let window_height = height.saturating_add(MENU_SHADOW_HEIGHT);
+
     window.set_resizable(true).map_err(|err| err.to_string())?;
     window
         .set_min_size(Some(tauri::Size::Physical(tauri::PhysicalSize {
@@ -103,9 +104,12 @@ pub fn resize_menu_popup_window(
         .set_max_size(Option::<tauri::Size>::None)
         .map_err(|err| err.to_string())?;
     window
-        .set_size(tauri::Size::Physical(tauri::PhysicalSize { width, height }))
+        .set_size(tauri::Size::Physical(tauri::PhysicalSize {
+            width: window_width,
+            height: window_height,
+        }))
         .map_err(|err| err.to_string())?;
-    apply_popup_gtk_size(window, width, height)
+    apply_popup_gtk_size(window, window_width, window_height)
 }
 
 pub fn reset_popup_gtk_size(window: &tauri::WebviewWindow) -> Result<(), String> {
@@ -167,15 +171,19 @@ pub fn log_popup_actual_size(
     width: u32,
     height: u32,
 ) {
+    let expected_width = width.saturating_add(MENU_SHADOW_WIDTH);
+    let expected_height = height.saturating_add(MENU_SHADOW_HEIGHT);
     let inner_size = window.inner_size();
     let differs = inner_size
         .as_ref()
-        .map(|size| size.width != width || size.height != height)
+        .map(|size| size.width != expected_width || size.height != expected_height)
         .unwrap_or(true);
     println!(
-        "{label} {phase}: requested={}x{}, actual inner_size={}, actual outer_size={}, differs_from_requested={}",
+        "{label} {phase}: content={}x{}, expected window={}x{}, actual inner_size={}, actual outer_size={}, differs_from_expected={}",
         width,
         height,
+        expected_width,
+        expected_height,
         format_size_result(inner_size),
         format_size_result(window.outer_size()),
         differs
