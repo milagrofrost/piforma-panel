@@ -53,8 +53,8 @@ export function specialMenu(): MenuItem[] {
     { kind: "item", label: "Clean Up Window", action: { kind: "run_system_action", action: "clean_up_window", confirmed: false } },
     { kind: "separator" },
     { kind: "item", label: "Sleep Display", action: { kind: "run_system_action", action: "sleep_display", confirmed: false } },
-    { kind: "item", label: "Restart", action: { kind: "confirmed_system_action", action: "restart", message: "Restart PiForma?" } },
-    { kind: "item", label: "Shut Down", action: { kind: "confirmed_system_action", action: "shut_down", message: "Shut down PiForma?" } }
+    { kind: "item", label: "Restart", action: { kind: "run_system_action", action: "restart", confirmed: true } },
+    { kind: "item", label: "Shut Down", action: { kind: "run_system_action", action: "shut_down", confirmed: true } }
   ];
 }
 
