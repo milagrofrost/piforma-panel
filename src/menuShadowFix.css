@@ -1,10 +1,9 @@
 /*
  * Tauri's transparent GTK/WebKit popup windows can composite reserved
  * transparent pixels using the native window background. Paint the classic
- * hard shadow inside the reserved webview area instead of relying on an
- * outside CSS box-shadow.
+ * hard shadow inside the reserved webview area for primary dropdowns only.
  */
-body.popup-window #app {
+body.popup-window:not(.flyout-window) #app {
   position: relative;
   display: inline-block;
   padding-right: var(--menu-shadow-x);
@@ -17,18 +16,26 @@ body.popup-window #app {
       calc(100% - var(--menu-shadow-x)) var(--menu-shadow-y) no-repeat;
 }
 
-/* Keep only the internal classic bevel on the menu itself. */
+/* Keep only the internal classic bevel on popup menu elements themselves. */
 body.popup-window .menu {
   box-shadow:
     inset 1px 1px 0 var(--classic-highlight),
     inset -1px -1px 0 var(--classic-shadow);
 }
 
-/* Flyouts must shrink-wrap so they do not paint into the shadow reserve. */
+/* Flyouts have no drop shadow or reserved shadow pixels. */
+body.popup-window.flyout-window #app {
+  position: relative;
+  display: inline-block;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
 body.flyout-window .menu {
   display: inline-block;
   width: max-content;
   min-width: 184px;
   max-width: none;
-  overflow-x: visible;
+  overflow-x: hidden;
 }
