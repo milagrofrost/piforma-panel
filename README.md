@@ -50,6 +50,23 @@ Build the frontend:
 npm run build
 ```
 
+Run lightweight frontend checks:
+
+```sh
+npm run typecheck
+npm test
+npm run check
+```
+
+Run lightweight Rust checks:
+
+```sh
+cd src-tauri
+cargo fmt --check
+cargo test
+cargo clippy --all-targets -- -D warnings
+```
+
 Build the Debian package configured in `src-tauri/tauri.conf.json`:
 
 ```sh
@@ -58,31 +75,24 @@ npm run tauri -- build
 
 The generated package is written under `src-tauri/target/release/bundle/deb/`.
 
-### Packaged frontend diagnostics
+### Diagnostics
 
-Release builds are configured to bundle the Vite output from `../dist` through
-`build.frontendDist` in `src-tauri/tauri.conf.json`. This debug branch also
-sets `app.security.csp` to `null` so CSP should not block the bundled frontend.
+Normal startup prints concise build identity and startup failures. Verbose
+frontend, popup, geometry, and packaged-asset diagnostics are disabled by
+default. Enable them temporarily with either:
 
-Before packaging, confirm the built frontend contains both the static HTML
-marker and the JavaScript diagnostics:
-
-```sh
-grep -R FRONTEND_STATIC_MARKER dist
-grep -R "frontend init start" dist
+```yaml
+diagnostics:
+  verbose: true
 ```
 
-After installing a package, confirm the installed binary was built from this
-frontend/config state:
+or:
 
 ```sh
-strings /usr/bin/piforma-panel | grep FRONTEND
+PIFORMA_PANEL_DEBUG=1 piforma-panel
 ```
 
-At runtime, the app should print `frontend top-level loaded` as soon as the
-frontend module starts and `frontend init start` when initialization reaches
-Rust. If the static `FRONTEND_STATIC_MARKER` remains visible in the panel, the
-HTML loaded but the JavaScript bundle did not execute.
+Keep verbose diagnostics disabled for normal packaged sessions.
 
 ## Configuration
 
@@ -95,10 +105,12 @@ On first launch, PiForma Panel creates:
 Default configuration:
 
 ```yaml
+# PiForma Panel config.
+# Missing sections and fields use the defaults shown here.
 bar:
-  width: 656
+  width: 658
   height: 20
-  x: 77
+  x: 76
   y: 0
   radius_top_left: 18
   radius_top_right: 18
@@ -106,7 +118,7 @@ bar:
   font_size: 13
 
 apple:
-  logo_path: /home/frost/.local/share/piforma-panel/apple-color.png
+  logo_path: ~/.local/share/piforma-panel/apple-color.png
 
 clock:
   enabled: true
@@ -114,7 +126,7 @@ clock:
 
 applications:
   scan_dirs:
-    - /home/frost/.local/share/applications
+    - ~/.local/share/applications
     - /usr/local/share/applications
     - /usr/share/applications
   show_no_display: false
@@ -127,17 +139,47 @@ menus:
   show_edit: true
   show_view: true
   show_special: true
+
+actions:
+  clean_up_window_command: ""
+
+diagnostics:
+  verbose: false
 ```
+
+Configuration is backward-compatible with partial files: missing sections and
+fields use these defaults. User paths beginning with `~` are expanded at load
+time. Unsafe numeric values are normalized before use: panel width and height,
+font size, and maximum menu height are clamped to at least `1`; corner radii are
+clamped to at least `0`; very large values are capped to protect window and menu
+geometry.
 
 After editing the configuration, restart the app to apply window size, position, menu visibility, and launcher scanning changes.
 
 ## Source Layout
 
-- `src/main.ts` builds the menu bar UI and calls Tauri commands.
+- `src/main.ts` bootstraps the frontend and composes UI modules.
+- `src/panelModel.ts` defines frontend-facing config, menu, popup, and launcher types.
+- `src/panelApi.ts` wraps Tauri commands and events.
+- `src/menuDefinitions.ts` owns static menu item definitions.
+- `src/menuRenderer.ts` renders panel and popup menu DOM.
+- `src/popupController.ts` owns popup state, coordination, and menu interactions.
+- `src/clock.ts` owns clock formatting and update scheduling.
 - `src/styles.css` contains the classic panel and menu styling.
-- `src-tauri/src/main.rs` owns configuration, desktop launcher scanning, and system actions.
+- `src-tauri/src/main.rs` registers Tauri commands and composes backend modules.
+- `src-tauri/src/config.rs` owns configuration defaults, loading, validation, and path handling.
+- `src-tauri/src/panel_model.rs` defines effective panel geometry and reusable popup/strut coordinate helpers.
+- `src-tauri/src/panel_actions.rs` defines typed panel actions and structured action results.
+- `src-tauri/src/shell_identity.rs` applies stable PiForma shell window roles and titles.
+- `src-tauri/src/desktop_entries.rs` discovers and parses application launchers.
+- `src-tauri/src/launcher.rs` owns detached process launching helpers.
+- `src-tauri/src/window_manager.rs` tracks and restores the previously active desktop window.
+- `src-tauri/src/panel_window.rs` applies native geometry for the main panel window.
+- `src-tauri/src/popup_windows.rs` creates, sizes, and hides menu popup windows.
+- `src-tauri/src/system_actions.rs` owns desktop/system menu actions and confirmations.
 - `src-tauri/tauri.conf.json` defines window geometry and Debian bundle settings.
 - `src-tauri/capabilities/default.json` defines the default Tauri permissions.
+- `docs/shell-window-identity.md` documents the shared PiForma shell-window identity contract.
 
 ## Version Control
 

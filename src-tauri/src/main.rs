@@ -1,126 +1,34 @@
+mod config;
+mod desktop_entries;
+mod diagnostics;
+mod launcher;
+mod panel_actions;
+mod panel_model;
+mod panel_window;
+mod popup_windows;
+mod shell_identity;
+mod system_actions;
+mod window_manager;
+
 use base64::Engine;
-use gtk::prelude::{ContainerExt, GtkWindowExt, WidgetExt};
-use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeMap,
-    env, fs,
-    path::{Path, PathBuf},
-    process::{Command, Stdio},
-    sync::Mutex,
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+use config::{ensure_config, print_config_diagnostics};
+use desktop_entries::{scan_desktop_apps, DesktopApp};
+use launcher::{
+    clean_exec_command, resolve_desktop_dir, run_short_command, spawn_detached,
+    spawn_detached_shell, spawn_detached_with_fallbacks,
 };
-use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
-
-const PRIMARY_MENU_POPUP_LABEL: &str = "menu-popup";
-const FLYOUT_MENU_POPUP_LABEL: &str = "menu-flyout";
-const MAIN_WINDOW_MIN_WIDTH: u32 = 1;
-const MAIN_WINDOW_MIN_HEIGHT: u32 = 1;
-
-const DEFAULT_CONFIG: &str = r#"bar:
-  width: 658
-  height: 20
-  x: 76
-  y: 0
-  radius_top_left: 18
-  radius_top_right: 18
-  font_family: ChicagoFLF
-  font_size: 13
-
-apple:
-  logo_path: /home/frost/.local/share/piforma-panel/apple-color.png
-
-clock:
-  enabled: true
-  format: "%I:%M %p"
-
-applications:
-  scan_dirs:
-    - /home/frost/.local/share/applications
-    - /usr/local/share/applications
-    - /usr/share/applications
-  show_no_display: false
-  group_by_categories: true
-  show_category_labels: false
-  max_menu_height: 420
-
-menus:
-  show_file: true
-  show_edit: true
-  show_view: true
-  show_special: true
-
-actions:
-  clean_up_window_command: ""
-"#;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PanelConfig {
-    bar: BarConfig,
-    apple: AppleConfig,
-    clock: ClockConfig,
-    applications: ApplicationsConfig,
-    menus: MenusConfig,
-    #[serde(default)]
-    actions: ActionsConfig,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct BarConfig {
-    width: u32,
-    height: u32,
-    x: i32,
-    y: i32,
-    radius_top_left: u32,
-    radius_top_right: u32,
-    font_family: String,
-    font_size: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct AppleConfig {
-    logo_path: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ClockConfig {
-    enabled: bool,
-    format: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ApplicationsConfig {
-    scan_dirs: Vec<String>,
-    show_no_display: bool,
-    group_by_categories: bool,
-    show_category_labels: bool,
-    max_menu_height: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct MenusConfig {
-    show_file: bool,
-    show_edit: bool,
-    show_view: bool,
-    show_special: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct ActionsConfig {
-    #[serde(default)]
-    clean_up_window_command: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DesktopApp {
-    id: String,
-    name: String,
-    exec: String,
-    icon: Option<String>,
-    categories: Vec<String>,
-    group: String,
-    is_control_panel: bool,
-}
+use panel_actions::{ActionResult, PanelAction};
+use panel_model::PanelGeometry;
+use panel_window::{configure_main_window, MAIN_WINDOW_MIN_HEIGHT, MAIN_WINDOW_MIN_WIDTH};
+use popup_windows::{
+    ensure_menu_flyout_window, ensure_menu_popup_window, hide_menu_flyout_window,
+    hide_menu_popup_window, log_popup_actual_size, reset_popup_gtk_size, resize_menu_popup_window,
+    FLYOUT_MENU_POPUP_LABEL, PRIMARY_MENU_POPUP_LABEL,
+};
+use serde::Serialize;
+use std::{env, fs, path::PathBuf};
+use tauri::{Emitter, Manager};
+use window_manager::{activate_remembered_window, WindowMemory};
 
 #[derive(Debug, Clone, Serialize)]
 struct SelectedMenuAction {
@@ -136,30 +44,24 @@ struct BuildInfo {
     dirty: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
-enum SystemAction {
-    SleepDisplay,
-    ShowDesktop,
-    Refresh,
-    CleanUpWindow,
-    Restart,
-    ShutDown,
-    ShowClipboard,
-}
-
-#[derive(Default)]
-struct WindowMemory {
-    previous_active_window: Mutex<Option<String>>,
+#[derive(Debug, Clone, Serialize)]
+struct PanelState {
+    config: config::PanelConfig,
+    geometry: PanelGeometry,
 }
 
 fn main() {
     print_build_info();
-    print_tauri_asset_diagnostics();
+    if diagnostics::verbose_from_env() {
+        print_tauri_asset_diagnostics();
+    }
     tauri::Builder::default()
         .manage(WindowMemory::default())
         .setup(|app| {
             let config = ensure_config().map_err(|err| err.to_string())?;
-            print_config_diagnostics(&config)?;
+            if diagnostics::verbose_for_config(&config) {
+                print_config_diagnostics(&config)?;
+            }
             if let Some(window) = app.get_webview_window("main") {
                 configure_main_window(&window, &config, "setup")?;
             }
@@ -170,6 +72,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_build_info,
             get_config,
+            get_panel_state,
             get_apple_logo_data_url,
             initialize_main_window,
             frontend_log,
@@ -191,6 +94,9 @@ fn main() {
             show_about_piforma,
             send_shortcut,
             run_system_action,
+            confirm_system_action,
+            confirm_system_action_result,
+            execute_panel_action,
         ])
         .run(tauri::generate_context!())
         .expect("error while running piforma-panel");
@@ -248,154 +154,34 @@ fn print_tauri_asset_diagnostics() {
     }
 }
 
-fn config_path() -> Result<PathBuf, String> {
-    let home = env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
-    Ok(PathBuf::from(home).join(".local/share/piforma-panel/config.yaml"))
-}
-
-fn ensure_config() -> Result<PanelConfig, String> {
-    let path = config_path()?;
-    if !path.exists() {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-        }
-        fs::write(&path, DEFAULT_CONFIG).map_err(|err| err.to_string())?;
-    }
-
-    let contents = fs::read_to_string(&path).map_err(|err| err.to_string())?;
-    serde_yaml::from_str(&contents).map_err(|err| format!("invalid config.yaml: {err}"))
-}
-
-fn configure_main_window(
-    window: &tauri::WebviewWindow,
-    config: &PanelConfig,
-    phase: &str,
-) -> Result<(), String> {
-    window.set_resizable(true).map_err(|err| err.to_string())?;
-    window
-        .set_min_size(Some(tauri::Size::Physical(tauri::PhysicalSize {
-            width: MAIN_WINDOW_MIN_WIDTH,
-            height: MAIN_WINDOW_MIN_HEIGHT,
-        })))
-        .map_err(|err| err.to_string())?;
-    window
-        .set_max_size(Option::<tauri::Size>::None)
-        .map_err(|err| err.to_string())?;
-    window
-        .set_size(tauri::Size::Physical(tauri::PhysicalSize {
-            width: config.bar.width,
-            height: config.bar.height,
-        }))
-        .map_err(|err| err.to_string())?;
-    apply_main_gtk_size(window, config.bar.width, config.bar.height)?;
-    window
-        .set_position(tauri::Position::Physical(tauri::PhysicalPosition {
-            x: config.bar.x,
-            y: config.bar.y,
-        }))
-        .map_err(|err| err.to_string())?;
-    log_main_window_actual_size(window, phase);
-    window.show().map_err(|err| err.to_string())?;
-    window.set_resizable(false).map_err(|err| err.to_string())
-}
-
-fn apply_main_gtk_size(
-    window: &tauri::WebviewWindow,
-    width: u32,
-    height: u32,
-) -> Result<(), String> {
-    let width_i32 = i32::try_from(width).map_err(|err| err.to_string())?;
-    let height_i32 = i32::try_from(height).map_err(|err| err.to_string())?;
-    let gtk_window = window.gtk_window().map_err(|err| err.to_string())?;
-    gtk_window.set_size_request(width_i32, height_i32);
-    gtk_window.set_default_size(width_i32, height_i32);
-    gtk_window.resize(width_i32, height_i32);
-
-    if let Ok(vbox) = window.default_vbox() {
-        vbox.set_size_request(width_i32, height_i32);
-        for child in vbox.children() {
-            child.set_size_request(width_i32, height_i32);
-        }
-    }
-
-    println!("gtk tight size applied: label=main, width={width}, height={height}");
-    Ok(())
-}
-
-fn apply_popup_gtk_size(
-    window: &tauri::WebviewWindow,
-    width: u32,
-    height: u32,
-) -> Result<(), String> {
-    let width_i32 = i32::try_from(width).map_err(|err| err.to_string())?;
-    let height_i32 = i32::try_from(height).map_err(|err| err.to_string())?;
-    let gtk_window = window.gtk_window().map_err(|err| err.to_string())?;
-
-    gtk_window.set_size_request(-1, -1);
-    gtk_window.set_default_size(width_i32, height_i32);
-
-    if let Ok(vbox) = window.default_vbox() {
-        vbox.set_size_request(-1, -1);
-        for child in vbox.children() {
-            child.set_size_request(-1, -1);
-        }
-
-        vbox.set_size_request(width_i32, height_i32);
-        for child in vbox.children() {
-            child.set_size_request(width_i32, height_i32);
-        }
-    }
-
-    gtk_window.set_size_request(width_i32, height_i32);
-    gtk_window.resize(width_i32, height_i32);
-
-    println!("gtk popup size applied: width={width}, height={height}");
-    Ok(())
-}
-
-fn log_main_window_actual_size(window: &tauri::WebviewWindow, phase: &str) {
-    println!(
-        "main window {phase}: actual inner_size={}; actual outer_size={}",
-        format_size_result(window.inner_size()),
-        format_size_result(window.outer_size())
-    );
-}
-
-fn format_size_result(size: tauri::Result<tauri::PhysicalSize<u32>>) -> String {
-    match size {
-        Ok(size) => format!("{}x{}", size.width, size.height),
-        Err(err) => format!("unavailable ({err})"),
-    }
-}
-
-fn print_config_diagnostics(config: &PanelConfig) -> Result<(), String> {
-    let path = config_path()?;
-    println!("config path: {}", path.display());
-    println!(
-        "config bar: width={}, height={}, x={}, y={}",
-        config.bar.width, config.bar.height, config.bar.x, config.bar.y
-    );
-    Ok(())
-}
-
 #[tauri::command]
 fn get_build_info() -> BuildInfo {
     build_info()
 }
 
 #[tauri::command]
-fn get_config() -> Result<PanelConfig, String> {
+fn get_config() -> Result<config::PanelConfig, String> {
     ensure_config()
+}
+
+#[tauri::command]
+fn get_panel_state(app: tauri::AppHandle) -> Result<PanelState, String> {
+    let config = ensure_config()?;
+    let geometry =
+        panel_window::effective_panel_geometry(app.get_webview_window("main").as_ref(), &config)?;
+    Ok(PanelState { config, geometry })
 }
 
 #[tauri::command]
 fn initialize_main_window(app: tauri::AppHandle) -> Result<(), String> {
     let config = ensure_config()?;
 
-    println!(
-        "startup main panel set to bar-only: width={}, height={}, x={}, y={}",
-        config.bar.width, config.bar.height, config.bar.x, config.bar.y
-    );
+    if diagnostics::verbose_for_config(&config) {
+        println!(
+            "startup main panel set to bar-only: width={}, height={}, x={}, y={}",
+            config.bar.width, config.bar.height, config.bar.x, config.bar.y
+        );
+    }
 
     if let Some(window) = app.get_webview_window("main") {
         configure_main_window(&window, &config, "frontend-init")?;
@@ -405,8 +191,10 @@ fn initialize_main_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn frontend_log(message: String) {
-    println!("frontend: {message}");
+fn frontend_log(message: String, verbose: Option<bool>) {
+    if verbose.unwrap_or(false) || diagnostics::verbose_from_env() {
+        println!("frontend: {message}");
+    }
 }
 
 #[tauri::command]
@@ -419,10 +207,17 @@ async fn open_menu_popup(
     height: u32,
     items: serde_json::Value,
 ) -> Result<(), String> {
-    println!("open_menu_popup start: label={label}, x={x}, y={y}, width={width}, height={height}");
+    if diagnostics::verbose_from_env() {
+        println!(
+            "open_menu_popup start: label={label}, x={x}, y={y}, width={width}, height={height}"
+        );
+    }
     let popup = ensure_menu_popup_window(&app)?;
 
     popup.hide().map_err(|err| err.to_string())?;
+    hide_menu_flyout_window(&app);
+    reset_popup_gtk_size(&popup)?;
+    popup.set_resizable(true).map_err(|err| err.to_string())?;
     popup
         .set_min_size(Some(tauri::Size::Physical(tauri::PhysicalSize {
             width: MAIN_WINDOW_MIN_WIDTH,
@@ -435,9 +230,11 @@ async fn open_menu_popup(
     popup
         .set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }))
         .map_err(|err| err.to_string())?;
-    println!(
-        "primary menu popup requested before render: label={label}, x={x}, y={y}, width={width}, height={height}"
-    );
+    if diagnostics::verbose_from_env() {
+        println!(
+            "primary menu popup requested before render: label={label}, x={x}, y={y}, width={width}, height={height}"
+        );
+    }
     popup
         .emit(
             "render-menu-popup",
@@ -449,9 +246,11 @@ async fn open_menu_popup(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn open_menu_flyout(
     app: tauri::AppHandle,
     label: String,
+    submenu: String,
     x: i32,
     y: i32,
     width: u32,
@@ -459,12 +258,16 @@ async fn open_menu_flyout(
     items: serde_json::Value,
 ) -> Result<(), String> {
     let item_count = items.as_array().map_or(0, Vec::len);
-    println!(
-        "flyout requested: label={label}, x={x}, y={y}, width={width}, height={height}, item_count={item_count}"
-    );
+    if diagnostics::verbose_from_env() {
+        println!(
+            "flyout requested: label={label}, submenu={submenu}, x={x}, y={y}, width={width}, height={height}, item_count={item_count}"
+        );
+    }
     let flyout = ensure_menu_flyout_window(&app)?;
 
     flyout.hide().map_err(|err| err.to_string())?;
+    reset_popup_gtk_size(&flyout)?;
+    flyout.set_resizable(true).map_err(|err| err.to_string())?;
     flyout
         .set_min_size(Some(tauri::Size::Physical(tauri::PhysicalSize {
             width: MAIN_WINDOW_MIN_WIDTH,
@@ -480,7 +283,7 @@ async fn open_menu_flyout(
     flyout
         .emit(
             "render-menu-flyout",
-            serde_json::json!({ "label": label, "items": items, "width": width, "height": height, "x": x, "y": y }),
+            serde_json::json!({ "label": label, "submenu": submenu, "items": items, "width": width, "height": height, "x": x, "y": y }),
         )
         .map_err(|err| err.to_string())?;
 
@@ -507,19 +310,19 @@ fn menu_popup_rendered(
     height: u32,
 ) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(PRIMARY_MENU_POPUP_LABEL) {
-        println!(
-            "primary menu popup requested after render: label={label}, width={width}, height={height}"
-        );
+        if diagnostics::verbose_from_env() {
+            println!(
+                "primary menu popup requested after render: label={label}, width={width}, height={height}"
+            );
+        }
         resize_menu_popup_window(&window, width, height)?;
-        window.show().map_err(|err| err.to_string())?;
         window.set_focus().map_err(|err| err.to_string())?;
-        window
-            .set_size(tauri::Size::Physical(tauri::PhysicalSize { width, height }))
-            .map_err(|err| err.to_string())?;
-        apply_popup_gtk_size(&window, width, height)?;
         window.set_resizable(false).map_err(|err| err.to_string())?;
-        println!("primary menu popup shown: label={label}");
-        log_popup_actual_size(&window, PRIMARY_MENU_POPUP_LABEL, "final", width, height);
+        window.show().map_err(|err| err.to_string())?;
+        if diagnostics::verbose_from_env() {
+            println!("primary menu popup shown: label={label}");
+            log_popup_actual_size(&window, PRIMARY_MENU_POPUP_LABEL, "final", width, height);
+        }
     }
     Ok(())
 }
@@ -532,19 +335,19 @@ fn menu_flyout_rendered(
     height: u32,
 ) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(FLYOUT_MENU_POPUP_LABEL) {
-        println!("flyout rendered: label={label}, width={width}, height={height}");
+        if diagnostics::verbose_from_env() {
+            println!("flyout rendered: label={label}, width={width}, height={height}");
+        }
         resize_menu_popup_window(&window, width, height)?;
-        window.show().map_err(|err| err.to_string())?;
-        window
-            .set_size(tauri::Size::Physical(tauri::PhysicalSize { width, height }))
-            .map_err(|err| err.to_string())?;
-        apply_popup_gtk_size(&window, width, height)?;
         window.set_resizable(false).map_err(|err| err.to_string())?;
+        window.show().map_err(|err| err.to_string())?;
         if let Err(err) = app.emit("menu-flyout-rendered", ()) {
             eprintln!("failed to emit menu-flyout-rendered: {err}");
         }
-        println!("flyout shown: label={label}, width={width}, height={height}");
-        log_popup_actual_size(&window, FLYOUT_MENU_POPUP_LABEL, "final", width, height);
+        if diagnostics::verbose_from_env() {
+            println!("flyout shown: label={label}, width={width}, height={height}");
+            log_popup_actual_size(&window, FLYOUT_MENU_POPUP_LABEL, "final", width, height);
+        }
     }
     Ok(())
 }
@@ -562,147 +365,20 @@ fn select_menu_action(
     label: String,
     action: serde_json::Value,
 ) -> Result<(), String> {
-    println!("selected menu action: {label}");
+    if diagnostics::verbose_from_env() {
+        println!("selected menu action: {label}");
+    }
     if action
         .get("kind")
         .and_then(serde_json::Value::as_str)
         .is_some_and(|kind| kind == "launch_app")
+        && diagnostics::verbose_from_env()
     {
-        println!("selected flyout application: {label}");
+        println!("flyout application selected: {label}");
     }
     hide_menu_popup_window(&app, true);
     app.emit("menu-action-selected", SelectedMenuAction { label, action })
         .map_err(|err| err.to_string())
-}
-
-fn ensure_menu_popup_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
-    ensure_popup_window(
-        app,
-        PRIMARY_MENU_POPUP_LABEL,
-        "index.html?popup=menu",
-        "PiForma Menu",
-    )
-}
-
-fn ensure_menu_flyout_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
-    ensure_popup_window(
-        app,
-        FLYOUT_MENU_POPUP_LABEL,
-        "index.html?popup=flyout",
-        "PiForma Menu Flyout",
-    )
-}
-
-fn ensure_popup_window(
-    app: &tauri::AppHandle,
-    label: &'static str,
-    url: &str,
-    title: &str,
-) -> Result<tauri::WebviewWindow, String> {
-    if let Some(window) = app.get_webview_window(label) {
-        return Ok(window);
-    }
-
-    let popup = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
-        .title(title)
-        .inner_size(1.0, 1.0)
-        .position(0.0, 0.0)
-        .resizable(false)
-        .fullscreen(false)
-        .decorations(false)
-        .transparent(true)
-        .shadow(false)
-        .skip_taskbar(true)
-        .focused(false)
-        .visible(false)
-        .build()
-        .map_err(|err| err.to_string())?;
-
-    if label == FLYOUT_MENU_POPUP_LABEL {
-        println!("flyout popup created once hidden");
-    } else {
-        println!("primary menu popup created once hidden");
-    }
-    Ok(popup)
-}
-
-fn hide_menu_popup_window(app: &tauri::AppHandle, emit_closed: bool) {
-    hide_menu_flyout_window(app);
-    if let Some(window) = app.get_webview_window(PRIMARY_MENU_POPUP_LABEL) {
-        if let Err(err) = window.hide() {
-            eprintln!("failed to hide primary menu popup: {err}");
-        } else {
-            println!("primary menu popup hidden");
-            log_popup_actual_size_unchecked(&window, PRIMARY_MENU_POPUP_LABEL, "hidden");
-        }
-    }
-    if emit_closed {
-        if let Err(err) = app.emit("menu-popup-closed", ()) {
-            eprintln!("failed to emit menu-popup-closed: {err}");
-        }
-    }
-}
-
-fn hide_menu_flyout_window(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window(FLYOUT_MENU_POPUP_LABEL) {
-        if let Err(err) = window.hide() {
-            eprintln!("failed to hide flyout menu popup: {err}");
-        } else {
-            println!("flyout hidden");
-            log_popup_actual_size_unchecked(&window, FLYOUT_MENU_POPUP_LABEL, "hidden");
-        }
-    }
-}
-
-fn resize_menu_popup_window(
-    window: &tauri::WebviewWindow,
-    width: u32,
-    height: u32,
-) -> Result<(), String> {
-    window.set_resizable(true).map_err(|err| err.to_string())?;
-    window
-        .set_min_size(Some(tauri::Size::Physical(tauri::PhysicalSize {
-            width: MAIN_WINDOW_MIN_WIDTH,
-            height: MAIN_WINDOW_MIN_HEIGHT,
-        })))
-        .map_err(|err| err.to_string())?;
-    window
-        .set_max_size(Option::<tauri::Size>::None)
-        .map_err(|err| err.to_string())?;
-    window
-        .set_size(tauri::Size::Physical(tauri::PhysicalSize { width, height }))
-        .map_err(|err| err.to_string())?;
-    apply_popup_gtk_size(window, width, height)
-}
-
-fn log_popup_actual_size(
-    window: &tauri::WebviewWindow,
-    label: &str,
-    phase: &str,
-    width: u32,
-    height: u32,
-) {
-    let inner_size = window.inner_size();
-    let differs = inner_size
-        .as_ref()
-        .map(|size| size.width != width || size.height != height)
-        .unwrap_or(true);
-    println!(
-        "{label} {phase}: requested={}x{}, actual inner_size={}, actual outer_size={}, differs_from_requested={}",
-        width,
-        height,
-        format_size_result(inner_size),
-        format_size_result(window.outer_size()),
-        differs
-    );
-}
-
-fn log_popup_actual_size_unchecked(window: &tauri::WebviewWindow, label: &str, phase: &str) {
-    println!(
-        "{label} {phase}: actual inner_size={}, actual outer_size={}",
-        format_size_result(window.inner_size()),
-        format_size_result(window.outer_size())
-    );
 }
 
 #[tauri::command]
@@ -803,34 +479,12 @@ fn remember_active_window(
     app: tauri::AppHandle,
     memory: tauri::State<WindowMemory>,
 ) -> Result<(), String> {
-    let window_id = command_stdout("xdotool", &["getactivewindow"])?;
-    if window_id.is_empty() {
-        return Err("xdotool did not return an active window".to_string());
-    }
-    if is_panel_window(&app, &window_id) {
-        return Ok(());
-    }
-    let mut remembered = memory
-        .previous_active_window
-        .lock()
-        .map_err(|_| "remembered window lock poisoned".to_string())?;
-    *remembered = Some(window_id);
-    Ok(())
+    window_manager::remember_active_window(&app, &memory)
 }
 
 #[tauri::command]
 fn show_about_piforma() -> Result<(), String> {
-    let info = build_info();
-    let dirty = if info.dirty { "dirty" } else { "clean" };
-    let message = format!(
-        "PiForma\nClassic Macintosh-inspired desktop environment\n\nVersion: {}\nGit commit: {}\nBranch: {}\nBuild: {}, {}",
-        env!("CARGO_PKG_VERSION"),
-        info.commit,
-        info.branch,
-        info.built_at,
-        dirty
-    );
-    show_text_dialog("About This PiForma", &message)
+    spawn_detached("about-piforma", &[])
 }
 
 #[tauri::command]
@@ -861,520 +515,24 @@ fn run_system_action(
     action: String,
     confirmed: bool,
 ) -> Result<(), String> {
-    let action = parse_system_action(&action)?;
-    match action {
-        SystemAction::SleepDisplay => spawn_short_with_fallbacks(&[
-            vec![
-                "xset".to_string(),
-                "dpms".to_string(),
-                "force".to_string(),
-                "off".to_string(),
-            ],
-            vec!["xset".to_string(), "s".to_string(), "activate".to_string()],
-        ]),
-        SystemAction::ShowDesktop => {
-            hide_menu_popup_window(&app, true);
-            spawn_short_with_fallbacks(&[
-                vec!["wmctrl".to_string(), "-k".to_string(), "on".to_string()],
-                vec![
-                    "xdotool".to_string(),
-                    "key".to_string(),
-                    "Super+d".to_string(),
-                ],
-            ])
-        }
-        SystemAction::Refresh => {
-            hide_menu_popup_window(&app, true);
-            if activate_remembered_window(&memory).is_ok() {
-                run_short_command("xdotool", &["key", "F5"])
-            } else {
-                run_short_command("xrefresh", &[])
-            }
-        }
-        SystemAction::CleanUpWindow => {
-            hide_menu_popup_window(&app, true);
-            let config = ensure_config()?;
-            if let Err(err) = activate_remembered_window(&memory) {
-                eprintln!("clean up window: no remembered target to reactivate: {err}");
-            }
-            if command_exists("xdotool") {
-                let _ = run_short_command("xdotool", &["key", "F5"]);
-            }
-            if config.actions.clean_up_window_command.trim().is_empty() {
-                Ok(())
-            } else {
-                spawn_detached_shell(&config.actions.clean_up_window_command)
-            }
-        }
-        SystemAction::ShowClipboard => show_clipboard(),
-        SystemAction::Restart => {
-            if !confirmed {
-                return Err("restart requires confirmation".to_string());
-            }
-            spawn_short_with_fallbacks(&[
-                vec!["systemctl".to_string(), "reboot".to_string()],
-                vec!["loginctl".to_string(), "reboot".to_string()],
-            ])
-        }
-        SystemAction::ShutDown => {
-            if !confirmed {
-                return Err("shutdown requires confirmation".to_string());
-            }
-            spawn_short_with_fallbacks(&[
-                vec!["systemctl".to_string(), "poweroff".to_string()],
-                vec!["loginctl".to_string(), "poweroff".to_string()],
-            ])
-        }
-    }
+    system_actions::run_system_action(&app, &memory, &action, confirmed)
 }
 
-fn parse_system_action(action: &str) -> Result<SystemAction, String> {
-    match action {
-        "sleep_display" => Ok(SystemAction::SleepDisplay),
-        "show_desktop" => Ok(SystemAction::ShowDesktop),
-        "refresh" => Ok(SystemAction::Refresh),
-        "clean_up_window" => Ok(SystemAction::CleanUpWindow),
-        "restart" => Ok(SystemAction::Restart),
-        "shut_down" => Ok(SystemAction::ShutDown),
-        "show_clipboard" => Ok(SystemAction::ShowClipboard),
-        _ => Err(format!("unknown system action: {action}")),
-    }
+#[tauri::command]
+fn confirm_system_action(app: tauri::AppHandle, action: String) -> Result<(), String> {
+    system_actions::confirm_system_action(&app, &action)
 }
 
-fn scan_desktop_apps(config: &PanelConfig) -> Result<Vec<DesktopApp>, String> {
-    let mut apps = BTreeMap::new();
-
-    for dir in &config.applications.scan_dirs {
-        let path = PathBuf::from(dir);
-        if !path.is_dir() {
-            continue;
-        }
-        scan_desktop_dir(&path, config, &mut apps)?;
-    }
-
-    let mut apps: Vec<DesktopApp> = apps.into_values().collect();
-    apps.sort_by(|a, b| {
-        a.group
-            .cmp(&b.group)
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-    });
-    Ok(apps)
+#[tauri::command]
+fn confirm_system_action_result(app: tauri::AppHandle, action: String) -> ActionResult {
+    system_actions::confirm_system_action_result(&app, &action)
 }
 
-fn scan_desktop_dir(
-    dir: &Path,
-    config: &PanelConfig,
-    apps: &mut BTreeMap<String, DesktopApp>,
-) -> Result<(), String> {
-    let entries = fs::read_dir(dir).map_err(|err| err.to_string())?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            scan_desktop_dir(&path, config, apps)?;
-            continue;
-        }
-        if path.extension().and_then(|ext| ext.to_str()) != Some("desktop") {
-            continue;
-        }
-        if let Some(app) = parse_desktop_file(&path, config)? {
-            apps.entry(app.id.clone()).or_insert(app);
-        }
-    }
-    Ok(())
-}
-
-fn parse_desktop_file(path: &Path, config: &PanelConfig) -> Result<Option<DesktopApp>, String> {
-    let contents = fs::read_to_string(path).map_err(|err| err.to_string())?;
-    let mut in_desktop_entry = false;
-    let mut values = BTreeMap::new();
-
-    for raw_line in contents.lines() {
-        let line = raw_line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            in_desktop_entry = line == "[Desktop Entry]";
-            continue;
-        }
-        if !in_desktop_entry {
-            continue;
-        }
-        if let Some((key, value)) = line.split_once('=') {
-            values.insert(key.to_string(), value.to_string());
-        }
-    }
-
-    if values
-        .get("Type")
-        .is_some_and(|value| value != "Application")
-    {
-        return Ok(None);
-    }
-    if parse_bool(values.get("Hidden")) {
-        return Ok(None);
-    }
-    if parse_bool(values.get("NoDisplay")) && !config.applications.show_no_display {
-        return Ok(None);
-    }
-
-    let Some(name) = values.get("Name").cloned() else {
-        return Ok(None);
-    };
-    let Some(exec) = values.get("Exec").cloned() else {
-        return Ok(None);
-    };
-
-    let categories = values
-        .get("Categories")
-        .map(|value| {
-            value
-                .split(';')
-                .filter(|item| !item.trim().is_empty())
-                .map(|item| item.trim().to_string())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let group = broad_group(&categories);
-    let is_control_panel = is_control_panel(&categories);
-    let id = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(&name)
-        .to_string();
-
-    Ok(Some(DesktopApp {
-        id,
-        name,
-        exec,
-        icon: values.get("Icon").cloned(),
-        categories,
-        group,
-        is_control_panel,
-    }))
-}
-
-fn parse_bool(value: Option<&String>) -> bool {
-    value.is_some_and(|value| value.eq_ignore_ascii_case("true"))
-}
-
-fn is_control_panel(categories: &[String]) -> bool {
-    categories.iter().any(|category| {
-        matches!(
-            category.as_str(),
-            "Settings" | "System" | "DesktopSettings" | "HardwareSettings"
-        )
-    })
-}
-
-fn broad_group(categories: &[String]) -> String {
-    for category in categories {
-        match category.as_str() {
-            "Settings" | "DesktopSettings" | "HardwareSettings" => return "Settings".to_string(),
-            "System" | "Utility" => return "System".to_string(),
-            "Network" | "WebBrowser" | "Email" => return "Internet".to_string(),
-            "Office" | "WordProcessor" | "Spreadsheet" => return "Office".to_string(),
-            "Graphics" | "Photography" => return "Graphics".to_string(),
-            "AudioVideo" | "Audio" | "Video" => return "Sound & Video".to_string(),
-            "Development" => return "Development".to_string(),
-            "Game" => return "Games".to_string(),
-            "Education" => return "Education".to_string(),
-            _ => {}
-        }
-    }
-    "Other".to_string()
-}
-
-fn clean_exec_command(exec: &str, name: &str) -> String {
-    let mut command = exec.to_string();
-    for token in ["%u", "%U", "%f", "%F", "%i", "%k"] {
-        command = command.replace(token, "");
-    }
-    command = command.replace("%c", &shell_quote(name));
-    remove_remaining_field_codes(&command).trim().to_string()
-}
-
-fn remove_remaining_field_codes(command: &str) -> String {
-    let mut cleaned = String::new();
-    let mut chars = command.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch != '%' {
-            cleaned.push(ch);
-            continue;
-        }
-        match chars.peek() {
-            Some('%') => {
-                chars.next();
-                cleaned.push('%');
-            }
-            Some(_) => {
-                chars.next();
-            }
-            None => {}
-        }
-    }
-    cleaned
-}
-
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-fn resolve_desktop_dir(home: &str) -> Result<PathBuf, String> {
-    if command_exists("xdg-user-dir") {
-        if let Ok(path) = command_stdout("xdg-user-dir", &["DESKTOP"]) {
-            let path = PathBuf::from(path);
-            if path.is_dir() {
-                return Ok(path);
-            }
-        }
-    }
-    let path = PathBuf::from(home).join("Desktop");
-    fs::create_dir_all(&path)
-        .map_err(|err| format!("failed to create {}: {err}", path.display()))?;
-    Ok(path)
-}
-
-fn show_clipboard() -> Result<(), String> {
-    let command = r#"
-set -eu
-tmp="${TMPDIR:-/tmp}/piforma-clipboard-$$.txt"
-trap 'rm -f "$tmp"' EXIT
-if command -v xclip >/dev/null 2>&1; then
-  xclip -selection clipboard -o >"$tmp" 2>/dev/null || printf '%s\n' 'Clipboard is empty or does not contain text.' >"$tmp"
-elif command -v xsel >/dev/null 2>&1; then
-  xsel --clipboard --output >"$tmp" 2>/dev/null || printf '%s\n' 'Clipboard is empty or does not contain text.' >"$tmp"
-elif command -v wl-paste >/dev/null 2>&1; then
-  wl-paste --no-newline >"$tmp" 2>/dev/null || printf '%s\n' 'Clipboard is empty or does not contain text.' >"$tmp"
-else
-  printf '%s\n' 'No clipboard reader found. Install xclip, xsel, or wl-clipboard.' >"$tmp"
-fi
-if [ ! -s "$tmp" ]; then
-  printf '%s\n' 'Clipboard is empty or does not contain text.' >"$tmp"
-fi
-if command -v zenity >/dev/null 2>&1; then
-  exec zenity --text-info --title='Clipboard' --filename="$tmp"
-elif command -v yad >/dev/null 2>&1; then
-  exec yad --text-info --title='Clipboard' --filename="$tmp"
-elif command -v xmessage >/dev/null 2>&1; then
-  exec xmessage -file "$tmp"
-else
-  exit 127
-fi
-"#;
-    spawn_detached_shell(command)
-}
-
-fn show_text_dialog(title: &str, message: &str) -> Result<(), String> {
-    let title = title.to_string();
-    let message = message.to_string();
-    let mut errors = Vec::new();
-    let dialog_commands = vec![
-        vec![
-            "zenity".to_string(),
-            "--info".to_string(),
-            format!("--title={title}"),
-            format!("--text={message}"),
-        ],
-        vec![
-            "yad".to_string(),
-            "--info".to_string(),
-            format!("--title={title}"),
-            format!("--text={message}"),
-        ],
-        vec!["xmessage".to_string(), message],
-    ];
-
-    for command in dialog_commands {
-        if command.is_empty() || !command_exists(&command[0]) {
-            errors.push(format!(
-                "{} not found",
-                command.first().cloned().unwrap_or_default()
-            ));
-            continue;
-        }
-        match spawn_detached(&command[0], &command[1..]) {
-            Ok(()) => return Ok(()),
-            Err(err) => errors.push(err),
-        }
-    }
-
-    Err(format!("failed to show dialog: {}", errors.join("; ")))
-}
-
-fn activate_remembered_window(memory: &tauri::State<WindowMemory>) -> Result<String, String> {
-    let window_id = memory
-        .previous_active_window
-        .lock()
-        .map_err(|_| "remembered window lock poisoned".to_string())?
-        .clone()
-        .ok_or_else(|| "no previously active window remembered".to_string())?;
-    run_short_command("xdotool", &["windowactivate", "--sync", &window_id])?;
-    thread::sleep(Duration::from_millis(75));
-    Ok(window_id)
-}
-
-fn is_panel_window(_app: &tauri::AppHandle, window_id: &str) -> bool {
-    let Ok(name) = command_stdout("xdotool", &["getwindowname", window_id]) else {
-        return false;
-    };
-    matches!(
-        name.as_str(),
-        "PiForma Panel" | "PiForma Menu" | "PiForma Menu Flyout" | "Classic PiForma menu bar"
-    ) || name.contains("piforma-panel")
-}
-
-fn command_stdout(program: &str, args: &[&str]) -> Result<String, String> {
-    let output = Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .map_err(|err| format!("failed to run {program}: {err}"))?;
-    if !output.status.success() {
-        return Err(format!("{program} exited with status {}", output.status));
-    }
-    String::from_utf8(output.stdout)
-        .map(|value| value.trim().to_string())
-        .map_err(|err| format!("{program} returned non-UTF-8 output: {err}"))
-}
-
-fn run_short_command(program: &str, args: &[&str]) -> Result<(), String> {
-    let status = Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map_err(|err| format!("failed to run {program}: {err}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("{program} exited with status {status}"))
-    }
-}
-
-fn spawn_short_with_fallbacks(commands: &[Vec<String>]) -> Result<(), String> {
-    let mut errors = Vec::new();
-    for command in commands {
-        if command.is_empty() {
-            continue;
-        }
-        match Command::new(&command[0])
-            .args(&command[1..])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-        {
-            Ok(_) => return Ok(()),
-            Err(err) => errors.push(format!("{}: {err}", command.join(" "))),
-        }
-    }
-    Err(errors.join("; "))
-}
-
-fn spawn_detached_with_fallbacks(commands: &[Vec<String>]) -> Result<(), String> {
-    let mut errors = Vec::new();
-    for command in commands {
-        if command.is_empty() {
-            continue;
-        }
-        if !command_exists(&command[0]) {
-            errors.push(format!("{} not found", command[0]));
-            continue;
-        }
-        match spawn_detached(&command[0], &command[1..]) {
-            Ok(()) => return Ok(()),
-            Err(err) => errors.push(err),
-        }
-    }
-    Err(errors.join("; "))
-}
-
-fn spawn_detached_shell(command: &str) -> Result<(), String> {
-    spawn_detached(
-        "sh",
-        &[
-            "-c".to_string(),
-            "exec sh -c \"$1\"".to_string(),
-            "piforma-shell".to_string(),
-            command.to_string(),
-        ],
-    )
-}
-
-fn spawn_detached(program: &str, args: &[String]) -> Result<(), String> {
-    if command_exists("systemd-run") {
-        let unit = unique_launch_unit_name();
-        let mut command_args = vec![
-            "--user".to_string(),
-            "--scope".to_string(),
-            "--collect".to_string(),
-            "--quiet".to_string(),
-            format!("--unit={unit}"),
-        ];
-        for key in [
-            "DISPLAY",
-            "XAUTHORITY",
-            "WAYLAND_DISPLAY",
-            "XDG_RUNTIME_DIR",
-            "DBUS_SESSION_BUS_ADDRESS",
-        ] {
-            if let Ok(value) = env::var(key) {
-                command_args.push(format!("--setenv={key}={value}"));
-            }
-        }
-        command_args.push("--".to_string());
-        command_args.push(program.to_string());
-        command_args.extend(args.iter().cloned());
-        match Command::new("systemd-run")
-            .args(&command_args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-        {
-            Ok(_) => return Ok(()),
-            Err(err) => eprintln!("systemd-run detached launch failed: {err}"),
-        }
-    }
-
-    if command_exists("setsid") {
-        let mut command = Command::new("setsid");
-        command.arg("-f").arg("--").arg(program).args(args);
-        match command
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-        {
-            Ok(_) => return Ok(()),
-            Err(err) => eprintln!("setsid detached launch failed: {err}"),
-        }
-    }
-
-    Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map(|_| ())
-        .map_err(|err| format!("failed to launch {program}: {err}"))
-}
-
-fn unique_launch_unit_name() -> String {
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or(0);
-    format!("piforma-launch-{}-{timestamp}", std::process::id())
-}
-
-fn command_exists(name: &str) -> bool {
-    let Some(path) = env::var_os("PATH") else {
-        return false;
-    };
-    env::split_paths(&path).any(|dir| dir.join(name).is_file())
+#[tauri::command]
+fn execute_panel_action(
+    app: tauri::AppHandle,
+    memory: tauri::State<WindowMemory>,
+    action: PanelAction,
+) -> ActionResult {
+    panel_actions::execute_panel_action(&app, &memory, action)
 }

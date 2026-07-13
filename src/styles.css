@@ -230,7 +230,8 @@ button {
   color: #777;
 }
 
-.menu-item:not(:disabled):hover {
+.menu-item:not(:disabled):hover,
+.menu-item.submenu-open {
   color: #fff;
   background: #000;
 }
