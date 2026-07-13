@@ -190,7 +190,7 @@ button {
   box-shadow:
     inset 1px 1px 0 var(--classic-highlight),
     inset -1px -1px 0 var(--classic-shadow),
-    2px 2px 0 rgba(0, 0, 0, 0.72);
+    2px 1px 0 rgba(0, 0, 0, 0.72);
   font-family: var(--panel-font), "Chicago", "Geneva", "Tahoma", sans-serif;
   font-size: var(--panel-font-size);
   font-weight: 400;
