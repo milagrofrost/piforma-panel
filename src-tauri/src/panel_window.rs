@@ -1,12 +1,16 @@
 use crate::{
     config::PanelConfig,
-    panel_model::{MonitorGeometry, PanelGeometry},
+    panel_model::{EwmhTopStrut, MonitorGeometry, PanelGeometry},
     shell_identity::{apply_shell_window_identity, ShellWindowRole},
 };
 use gtk::prelude::{ContainerExt, GtkWindowExt, WidgetExt};
+use std::{process::Command, thread, time::Duration};
 
 pub const MAIN_WINDOW_MIN_WIDTH: u32 = 1;
 pub const MAIN_WINDOW_MIN_HEIGHT: u32 = 1;
+const MAIN_WINDOW_TITLE: &str = "PiForma Panel";
+const XPROP_RETRY_COUNT: usize = 12;
+const XPROP_RETRY_DELAY: Duration = Duration::from_millis(25);
 
 pub fn configure_main_window(
     window: &tauri::WebviewWindow,
@@ -35,7 +39,7 @@ pub fn configure_main_window(
             height: geometry.height,
         }))
         .map_err(|err| err.to_string())?;
-    apply_main_gtk_size(window, geometry.width, geometry.height, verbose)?;
+    apply_main_gtk_window_settings(window, geometry.width, geometry.height, verbose)?;
     window
         .set_position(tauri::Position::Physical(tauri::PhysicalPosition {
             x: geometry.x,
@@ -46,6 +50,9 @@ pub fn configure_main_window(
         log_main_window_actual_size(window, phase);
     }
     window.show().map_err(|err| err.to_string())?;
+    if let Err(err) = apply_ewmh_struts(&geometry, verbose) {
+        eprintln!("PiForma Panel could not reserve desktop work area: {err}");
+    }
     window.set_resizable(false).map_err(|err| err.to_string())?;
     Ok(geometry)
 }
@@ -98,7 +105,7 @@ fn log_panel_geometry(config: &PanelConfig, geometry: &PanelGeometry) {
     );
 }
 
-fn apply_main_gtk_size(
+fn apply_main_gtk_window_settings(
     window: &tauri::WebviewWindow,
     width: u32,
     height: u32,
@@ -107,6 +114,7 @@ fn apply_main_gtk_size(
     let width_i32 = i32::try_from(width).map_err(|err| err.to_string())?;
     let height_i32 = i32::try_from(height).map_err(|err| err.to_string())?;
     let gtk_window = window.gtk_window().map_err(|err| err.to_string())?;
+    gtk_window.set_type_hint(gtk::gdk::WindowTypeHint::Dock);
     gtk_window.set_size_request(width_i32, height_i32);
     gtk_window.set_default_size(width_i32, height_i32);
     gtk_window.resize(width_i32, height_i32);
@@ -119,9 +127,81 @@ fn apply_main_gtk_size(
     }
 
     if verbose {
-        println!("gtk tight size applied: label=main, width={width}, height={height}");
+        println!(
+            "gtk dock settings applied: label=main, width={width}, height={height}, type_hint=dock"
+        );
     }
     Ok(())
+}
+
+fn apply_ewmh_struts(geometry: &PanelGeometry, verbose: bool) -> Result<(), String> {
+    let strut = geometry.ewmh_top_strut();
+    let basic = format_cardinals(&strut.basic_values());
+    let partial = format_cardinals(&strut.partial_values());
+    let mut last_error = String::new();
+
+    for attempt in 1..=XPROP_RETRY_COUNT {
+        match set_xprop_cardinals("_NET_WM_STRUT", &basic)
+            .and_then(|_| set_xprop_cardinals("_NET_WM_STRUT_PARTIAL", &partial))
+        {
+            Ok(()) => {
+                if verbose {
+                    log_ewmh_strut(strut, attempt);
+                }
+                return Ok(());
+            }
+            Err(err) => {
+                last_error = err;
+                if attempt < XPROP_RETRY_COUNT {
+                    thread::sleep(XPROP_RETRY_DELAY);
+                }
+            }
+        }
+    }
+
+    Err(last_error)
+}
+
+fn set_xprop_cardinals(property: &str, values: &str) -> Result<(), String> {
+    let output = Command::new("xprop")
+        .args([
+            "-name",
+            MAIN_WINDOW_TITLE,
+            "-f",
+            property,
+            "32c",
+            "-set",
+            property,
+            values,
+        ])
+        .output()
+        .map_err(|err| format!("failed to run xprop for {property}: {err}"))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(if stderr.is_empty() {
+        format!("xprop failed to set {property} with status {}", output.status)
+    } else {
+        format!("xprop failed to set {property}: {stderr}")
+    })
+}
+
+fn format_cardinals<const N: usize>(values: &[u32; N]) -> String {
+    values
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn log_ewmh_strut(strut: EwmhTopStrut, attempt: usize) {
+    println!(
+        "EWMH dock strut applied: top={}, top_start_x={}, top_end_x={}, xprop_attempt={attempt}",
+        strut.top, strut.start_x, strut.end_x
+    );
 }
 
 fn log_main_window_actual_size(window: &tauri::WebviewWindow, phase: &str) {
