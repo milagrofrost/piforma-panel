@@ -6,6 +6,10 @@
   --panel-font: ChicagoFLF;
   --panel-font-size: 13px;
   --menu-max-height: 420px;
+  --classic-face: rgb(221, 221, 221);
+  --classic-highlight: rgb(255, 255, 255);
+  --classic-shadow: rgb(153, 153, 153);
+  --classic-border: rgb(0, 0, 0);
 }
 
 :root,
@@ -28,6 +32,7 @@ body {
   user-select: none;
   font-family: var(--panel-font), "Chicago", "Geneva", "Tahoma", sans-serif;
   font-size: var(--panel-font-size);
+  font-weight: 400;
 }
 
 html:has(> body.popup-window),
@@ -69,6 +74,7 @@ body.flyout-window #app {
 
 button {
   font: inherit;
+  font-weight: 400;
 }
 
 .menu-bar {
@@ -79,15 +85,27 @@ button {
   display: flex;
   align-items: stretch;
   justify-content: space-between;
-  overflow: visible;
+  overflow: hidden;
   color: #000;
-  background: #fff;
-  border: 1px solid #000;
+  background: linear-gradient(
+    to bottom,
+    var(--classic-highlight) 0,
+    var(--classic-highlight) 1px,
+    var(--classic-face) 1px,
+    var(--classic-face) calc(100% - 1px),
+    var(--classic-shadow) calc(100% - 1px),
+    var(--classic-shadow) 100%
+  );
+  border: 1px solid var(--classic-border);
   border-top-left-radius: var(--radius-tl);
   border-top-right-radius: var(--radius-tr);
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
+  box-shadow:
+    inset 1px 0 0 rgba(255, 255, 255, 0.55),
+    inset -1px 0 0 rgba(102, 102, 102, 0.55);
   pointer-events: auto;
+  font-weight: 400;
 }
 
 .menu-left,
@@ -122,6 +140,7 @@ button {
   line-height: 18px;
   white-space: nowrap;
   pointer-events: auto;
+  font-weight: 400;
 }
 
 .apple-button {
@@ -131,9 +150,10 @@ button {
 
 .apple-button img {
   width: 14px;
-  height: 16px;
+  height: 14px;
   object-fit: contain;
-  image-rendering: auto;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
 }
 
 .apple-fallback {
@@ -155,6 +175,7 @@ button {
   line-height: 18px;
   text-align: right;
   white-space: nowrap;
+  font-weight: 400;
 }
 
 .menu {
@@ -163,10 +184,14 @@ button {
   min-width: 184px;
   padding: 3px 0;
   color: #000;
-  background: #fff;
+  background: var(--classic-face);
   border: 1px solid #000;
+  box-shadow:
+    inset 1px 1px 0 var(--classic-highlight),
+    inset -1px -1px 0 var(--classic-shadow);
   font-family: var(--panel-font), "Chicago", "Geneva", "Tahoma", sans-serif;
   font-size: var(--panel-font-size);
+  font-weight: 400;
   line-height: 16px;
 }
 
@@ -208,6 +233,7 @@ button {
   text-align: left;
   line-height: 16px;
   white-space: nowrap;
+  font-weight: 400;
 }
 
 .menu-item.has-submenu {
@@ -239,8 +265,8 @@ button {
 .separator {
   height: 1px;
   margin: 3px 7px;
-  background: #9b9b9b;
-  border-bottom: 1px solid #fff;
+  background: var(--classic-shadow);
+  border-bottom: 1px solid var(--classic-highlight);
 }
 
 .scrollable {
@@ -258,7 +284,7 @@ button {
 }
 
 .scrollable::-webkit-scrollbar-track {
-  background: #fff;
+  background: var(--classic-face);
   border-left: 1px solid #000;
 }
 

@@ -9,6 +9,9 @@ export type PanelConfig = {
     font_family: string;
     font_size: number;
   };
+  apple: {
+    logo_path: string;
+  };
   clock: {
     enabled: boolean;
     format: string;
