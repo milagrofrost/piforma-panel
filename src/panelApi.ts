@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { ActionResult, BackendPanelAction, DesktopApp, MenuAction, PanelConfig, PanelState, RenderMenuPopupPayload } from "./panelModel";
+import type { ActionResult, BackendPanelAction, DesktopApp, MenuAction, PanelConfig, PanelState, RenderMenuPopupPayload, SystemStatus } from "./panelModel";
 
 let verboseDiagnostics = false;
 
@@ -39,6 +39,18 @@ export async function getConfig() {
 
 export async function getPanelState() {
   return await invoke<PanelState>("get_panel_state");
+}
+
+export async function getSystemStatus() {
+  return await invoke<SystemStatus>("get_system_status");
+}
+
+export async function setSystemVolume(volume: number) {
+  await invoke("set_system_volume", { volume: Math.round(volume) });
+}
+
+export async function openNetworkSettings() {
+  await invoke("open_network_settings");
 }
 
 export async function initializeMainWindow() {

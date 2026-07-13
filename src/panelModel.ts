@@ -49,6 +49,13 @@ export type PanelState = {
   geometry: PanelGeometry;
 };
 
+export type SystemStatus = {
+  ssid: string | null;
+  internet_available: boolean;
+  volume: number;
+  audio_available: boolean;
+};
+
 export type DesktopApp = {
   id: string;
   name: string;

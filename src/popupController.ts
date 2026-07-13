@@ -1,9 +1,12 @@
 import * as api from "./panelApi";
 import { renderPanel, buildMenu, measureMenu } from "./menuRenderer";
-import type { DesktopApp, MenuAction, MenuItem, PanelConfig, PanelGeometry, PopupGeometry, PopupMode, RenderMenuPopupPayload, SubmenuKind } from "./panelModel";
+import type { DesktopApp, MenuAction, MenuItem, PanelConfig, PanelGeometry, PopupGeometry, PopupMode, RenderMenuPopupPayload, SubmenuKind, SystemStatus } from "./panelModel";
 import { serializeLogValue } from "./panelModel";
 
 const DEBUG_EVENT_DIAGNOSTICS = false;
+const SYSTEM_STATUS_LABEL = "System Status";
+const SYSTEM_STATUS_POPUP_WIDTH = 222;
+const SYSTEM_STATUS_POPUP_HEIGHT = 58;
 
 export class PopupController {
   private openButton: HTMLElement | null = null;
@@ -75,6 +78,13 @@ export class PopupController {
         void this.toggleMenu(target, event.detail as MenuItem[]).catch(console.error);
       }
     });
+
+    this.root.addEventListener("piforma:toggle-system-status", (event) => {
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        void this.toggleSystemStatus(target).catch(console.error);
+      }
+    });
   }
 
   async initializePrimaryPopupWindow() {
@@ -83,7 +93,11 @@ export class PopupController {
       this.cancelPopupBlurClose();
       this.flyoutOpen = false;
       this.activeFlyoutSubmenu = null;
-      this.renderPopupMenu(payload);
+      if (payload.label === SYSTEM_STATUS_LABEL) {
+        await this.renderSystemStatusPopup(payload);
+      } else {
+        this.renderPopupMenu(payload);
+      }
       await api.menuPopupRendered({
         label: payload.label,
         width: payload.width,
@@ -176,6 +190,38 @@ export class PopupController {
     }
   }
 
+  private async toggleSystemStatus(button: HTMLElement) {
+    await api.frontendLog("toggleSystemStatus start");
+    if (this.openButton === button) {
+      await this.closeMenu();
+      return;
+    }
+
+    this.openButton?.classList.remove("is-open");
+    const rect = button.getBoundingClientRect();
+    const popupRight = this.geometry.x + Math.floor(rect.right);
+    const x = Math.max(this.geometry.monitor_origin_x, popupRight - SYSTEM_STATUS_POPUP_WIDTH);
+    const y = this.geometry.y + this.geometry.height;
+
+    this.openButton = button;
+    button.classList.add("is-open");
+    try {
+      await this.rememberActiveWindow();
+      await api.openMenuPopup({
+        label: SYSTEM_STATUS_LABEL,
+        x,
+        y,
+        width: SYSTEM_STATUS_POPUP_WIDTH,
+        height: SYSTEM_STATUS_POPUP_HEIGHT,
+        items: []
+      });
+    } catch (error) {
+      await api.frontendLog(`system status popup error: ${serializeLogValue(error)}`);
+      this.openButton = null;
+      button.classList.remove("is-open");
+    }
+  }
+
   private async rememberActiveWindow() {
     if (this.popupMode !== "main") {
       return;
@@ -196,6 +242,96 @@ export class PopupController {
     this.root.replaceChildren(menu);
     void api.frontendLog(
       `popup rendered label=${payload.label}, item count=${payload.items.length}, width=${payload.width}, height=${payload.height}`
+    );
+  }
+
+  private async renderSystemStatusPopup(payload: RenderMenuPopupPayload) {
+    this.activePrimaryPopup = { x: payload.x, y: payload.y, width: payload.width, height: payload.height };
+    let status: SystemStatus;
+    try {
+      status = await api.getSystemStatus();
+    } catch (error) {
+      await api.frontendLog(`get_system_status failed: ${serializeLogValue(error)}`);
+      status = {
+        ssid: null,
+        internet_available: false,
+        volume: 0,
+        audio_available: false
+      };
+    }
+
+    const menu = document.createElement("div");
+    menu.className = "menu system-status-menu";
+    menu.setAttribute("role", "menu");
+
+    const networkRow = document.createElement("button");
+    networkRow.type = "button";
+    networkRow.className = "system-status-network-row";
+    networkRow.setAttribute("role", "menuitem");
+    networkRow.title = "Open network settings";
+
+    const networkName = document.createElement("span");
+    networkName.className = "system-status-network-name";
+    networkName.textContent = status.ssid ?? "Not Connected";
+
+    const networkDot = document.createElement("span");
+    const connectivityClass = status.ssid
+      ? status.internet_available
+        ? "connected"
+        : "limited"
+      : "disconnected";
+    networkDot.className = `system-status-dot ${connectivityClass}`;
+    networkDot.setAttribute("aria-hidden", "true");
+    networkRow.append(networkName, networkDot);
+    networkRow.addEventListener("click", () => {
+      void (async () => {
+        await this.closeMenu();
+        await api.openNetworkSettings();
+      })().catch(async (error) => {
+        await api.frontendLog(`open_network_settings failed: ${serializeLogValue(error)}`);
+      });
+    });
+
+    const separator = document.createElement("div");
+    separator.className = "system-status-separator";
+
+    const volumeRow = document.createElement("div");
+    volumeRow.className = "system-status-volume-row";
+
+    const speaker = document.createElement("span");
+    speaker.className = "system-status-speaker";
+    speaker.setAttribute("aria-hidden", "true");
+
+    const slider = document.createElement("input");
+    slider.className = "system-status-volume";
+    slider.type = "range";
+    slider.min = "0";
+    slider.max = "100";
+    slider.step = "1";
+    slider.value = String(Math.max(0, Math.min(100, status.volume)));
+    slider.disabled = !status.audio_available;
+    slider.setAttribute("aria-label", "System volume");
+    slider.title = status.audio_available ? `Volume: ${slider.value}%` : "System audio unavailable";
+
+    let volumeTimer: number | null = null;
+    slider.addEventListener("input", () => {
+      slider.title = `Volume: ${slider.value}%`;
+      if (volumeTimer !== null) {
+        window.clearTimeout(volumeTimer);
+      }
+      volumeTimer = window.setTimeout(() => {
+        volumeTimer = null;
+        void api.setSystemVolume(Number(slider.value)).catch(async (error) => {
+          await api.frontendLog(`set_system_volume failed: ${serializeLogValue(error)}`);
+        });
+      }, 45);
+    });
+
+    volumeRow.append(speaker, slider);
+    menu.append(networkRow, separator, volumeRow);
+    this.root.replaceChildren(menu);
+    void api.frontendLog(
+      `system status popup rendered ssid=${status.ssid ?? "none"}, internet=${status.internet_available}, volume=${status.volume}, audio=${status.audio_available}`
     );
   }
 
@@ -356,7 +492,7 @@ export class PopupController {
   }
 
   private isPanelMenuButton(target: Node) {
-    return target instanceof Element && target.closest(".apple-button, .menu-title");
+    return target instanceof Element && target.closest(".apple-button, .menu-title, .system-status-button");
   }
 
   private handleGlobalKeyDown(event: KeyboardEvent) {

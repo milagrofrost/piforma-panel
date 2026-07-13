@@ -5,6 +5,10 @@ import { detectPopupMode } from "./panelModel";
 import { PopupController } from "./popupController";
 import "./styles.css";
 import "./macOs9Theme.css";
+import "./menuShadowFix.css";
+import "./systemStatusMenu.css";
+import "./systemStatusAssets";
+import "./menuAutoClose";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 

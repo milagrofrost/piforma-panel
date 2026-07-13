@@ -8,6 +8,7 @@ mod panel_window;
 mod popup_windows;
 mod shell_identity;
 mod system_actions;
+mod system_status;
 mod window_manager;
 
 use base64::Engine;
@@ -76,6 +77,9 @@ fn main() {
             get_apple_logo_data_url,
             initialize_main_window,
             frontend_log,
+            get_system_status,
+            set_system_volume,
+            open_network_settings,
             open_menu_popup,
             open_menu_flyout,
             close_menu_popup,
@@ -195,6 +199,21 @@ fn frontend_log(message: String, verbose: Option<bool>) {
     if verbose.unwrap_or(false) || diagnostics::verbose_from_env() {
         println!("frontend: {message}");
     }
+}
+
+#[tauri::command]
+fn get_system_status() -> system_status::SystemStatus {
+    system_status::get_system_status()
+}
+
+#[tauri::command]
+fn set_system_volume(volume: u8) -> Result<(), String> {
+    system_status::set_system_volume(volume)
+}
+
+#[tauri::command]
+fn open_network_settings() -> Result<(), String> {
+    system_status::open_network_settings()
 }
 
 #[tauri::command]
