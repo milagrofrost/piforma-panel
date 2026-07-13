@@ -12,16 +12,12 @@ struct ShowDesktopSettings {
 }
 
 pub fn show_all_windows() -> Result<(), String> {
-    require_x11_tools(&["wmctrl"])?;
-    if !command_exists("zenity") && !command_exists("yad") {
-        return Err("Show All Windows requires zenity or yad".to_string());
-    }
+    require_x11_tools(&["wmctrl", "xdotool"])?;
 
     spawn_detached_shell(
         r#"
 set -eu
-list="${TMPDIR:-/tmp}/piforma-window-overview-$$.tsv"
-trap 'rm -f "$list"' EXIT
+state="${XDG_RUNTIME_DIR:-/tmp}/piforma-show-desktop-${UID:-$(id -u)}.windows"
 
 wmctrl -lx | while read -r id desktop class host title; do
   [ -n "${id:-}" ] || continue
@@ -29,44 +25,13 @@ wmctrl -lx | while read -r id desktop class host title; do
   case "$props" in
     *DOCK*|*DESKTOP*|*SPLASH*|*TOOLTIP*|*NOTIFICATION*) continue ;;
   esac
-  [ -n "${title:-}" ] || title="(Untitled Window)"
-  printf '%s\t%s\t%s\n' "$id" "$title" "$class" >> "$list"
+
+  wmctrl -i -r "$id" -b remove,hidden 2>/dev/null || true
+  xdotool windowmap "$id" 2>/dev/null || true
+  xdotool windowraise "$id" 2>/dev/null || true
 done
 
-[ -s "$list" ] || {
-  if command -v zenity >/dev/null 2>&1; then
-    zenity --info --title='Show All Windows' --text='No application windows are open.'
-  else
-    yad --info --title='Show All Windows' --text='No application windows are open.'
-  fi
-  exit 0
-}
-
-(
-  i=0
-  while [ "$i" -lt 30 ]; do
-    wmctrl -r 'PiForma Window Overview' -b add,above,sticky 2>/dev/null && exit 0
-    i=$((i + 1))
-    sleep 0.05
-  done
-) &
-
-if command -v zenity >/dev/null 2>&1; then
-  selected="$(zenity --list --title='PiForma Window Overview' --text='Choose a window:' \
-    --column='Window ID' --column='Window' --column='Application' \
-    --hide-column=1 --print-column=1 --width=640 --height=420 < "$list" || true)"
-else
-  selected="$(yad --list --title='PiForma Window Overview' --text='Choose a window:' \
-    --column='Window ID' --column='Window' --column='Application' \
-    --hide-column=1 --print-column=1 --width=640 --height=420 < "$list" || true)"
-fi
-
-[ -n "$selected" ] || exit 0
-wmctrl -i -r "$selected" -b remove,hidden 2>/dev/null || true
-wmctrl -i -a "$selected" 2>/dev/null || {
-  xdotool windowmap "$selected" 2>/dev/null || true
-  xdotool windowactivate --sync "$selected"
-}
+rm -f "$state"
 "#,
     )
 }
