@@ -36,7 +36,7 @@ rm -f "$state"
     )
 }
 
-pub fn toggle_show_desktop() -> Result<(), String> {
+pub fn show_desktop() -> Result<(), String> {
     require_x11_tools(&["wmctrl", "xdotool"])?;
     let preserved_apps = load_show_desktop_apps()?;
     let preserve_setup = preserved_apps
@@ -54,18 +54,6 @@ preserve="${{XDG_RUNTIME_DIR:-/tmp}}/piforma-show-desktop-${{UID:-$(id -u)}}.pre
 rm -f "$preserve"
 : > "$preserve"
 {preserve_setup}
-
-if [ -s "$state" ]; then
-  last=""
-  while IFS= read -r id; do
-    [ -n "$id" ] || continue
-    wmctrl -i -r "$id" -b remove,hidden 2>/dev/null || xdotool windowmap "$id" 2>/dev/null || true
-    last="$id"
-  done < "$state"
-  rm -f "$state" "$preserve"
-  [ -n "$last" ] && wmctrl -i -a "$last" 2>/dev/null || true
-  exit 0
-fi
 
 : > "$state"
 wmctrl -lx | while read -r id desktop class host title; do
