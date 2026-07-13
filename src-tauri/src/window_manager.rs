@@ -1,4 +1,7 @@
-use crate::launcher::{command_stdout, run_short_command};
+use crate::{
+    launcher::{command_stdout, run_short_command},
+    shell_identity::is_piforma_panel_title,
+};
 use std::{sync::Mutex, thread, time::Duration};
 
 #[derive(Default)]
@@ -41,8 +44,5 @@ fn is_panel_window(_app: &tauri::AppHandle, window_id: &str) -> bool {
     let Ok(name) = command_stdout("xdotool", &["getwindowname", window_id]) else {
         return false;
     };
-    matches!(
-        name.as_str(),
-        "PiForma Panel" | "PiForma Menu" | "PiForma Menu Flyout" | "Classic PiForma menu bar"
-    ) || name.contains("piforma-panel")
+    is_piforma_panel_title(&name)
 }

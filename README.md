@@ -157,6 +157,7 @@ After editing the configuration, restart the app to apply window size, position,
 - `src-tauri/src/config.rs` owns configuration defaults, loading, validation, and path handling.
 - `src-tauri/src/panel_model.rs` defines effective panel geometry and reusable popup/strut coordinate helpers.
 - `src-tauri/src/panel_actions.rs` defines typed panel actions and structured action results.
+- `src-tauri/src/shell_identity.rs` applies stable PiForma shell window roles and titles.
 - `src-tauri/src/desktop_entries.rs` discovers and parses application launchers.
 - `src-tauri/src/launcher.rs` owns detached process launching helpers.
 - `src-tauri/src/window_manager.rs` tracks and restores the previously active desktop window.
@@ -165,6 +166,7 @@ After editing the configuration, restart the app to apply window size, position,
 - `src-tauri/src/system_actions.rs` owns desktop/system menu actions and confirmations.
 - `src-tauri/tauri.conf.json` defines window geometry and Debian bundle settings.
 - `src-tauri/capabilities/default.json` defines the default Tauri permissions.
+- `docs/shell-window-identity.md` documents the shared PiForma shell-window identity contract.
 
 ## Version Control
 

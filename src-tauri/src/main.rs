@@ -5,6 +5,7 @@ mod panel_actions;
 mod panel_model;
 mod panel_window;
 mod popup_windows;
+mod shell_identity;
 mod system_actions;
 mod window_manager;
 

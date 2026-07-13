@@ -1,4 +1,7 @@
-use crate::panel_window::{format_size_result, MAIN_WINDOW_MIN_HEIGHT, MAIN_WINDOW_MIN_WIDTH};
+use crate::{
+    panel_window::{format_size_result, MAIN_WINDOW_MIN_HEIGHT, MAIN_WINDOW_MIN_WIDTH},
+    shell_identity::{apply_shell_window_identity, ShellWindowRole},
+};
 use gtk::prelude::{ContainerExt, GtkWindowExt, WidgetExt};
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -6,35 +9,26 @@ pub const PRIMARY_MENU_POPUP_LABEL: &str = "menu-popup";
 pub const FLYOUT_MENU_POPUP_LABEL: &str = "menu-flyout";
 
 pub fn ensure_menu_popup_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
-    ensure_popup_window(
-        app,
-        PRIMARY_MENU_POPUP_LABEL,
-        "index.html?popup=menu",
-        "PiForma Menu",
-    )
+    ensure_popup_window(app, ShellWindowRole::MenuPopup, "index.html?popup=menu")
 }
 
 pub fn ensure_menu_flyout_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
-    ensure_popup_window(
-        app,
-        FLYOUT_MENU_POPUP_LABEL,
-        "index.html?popup=flyout",
-        "PiForma Menu Flyout",
-    )
+    ensure_popup_window(app, ShellWindowRole::MenuFlyout, "index.html?popup=flyout")
 }
 
 fn ensure_popup_window(
     app: &tauri::AppHandle,
-    label: &'static str,
+    role: ShellWindowRole,
     url: &str,
-    title: &str,
 ) -> Result<tauri::WebviewWindow, String> {
+    let label = role.tauri_label();
     if let Some(window) = app.get_webview_window(label) {
+        apply_shell_window_identity(&window, role)?;
         return Ok(window);
     }
 
     let popup = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
-        .title(title)
+        .title(role.title())
         .inner_size(1.0, 1.0)
         .position(0.0, 0.0)
         .resizable(false)
@@ -48,7 +42,9 @@ fn ensure_popup_window(
         .build()
         .map_err(|err| err.to_string())?;
 
-    if label == FLYOUT_MENU_POPUP_LABEL {
+    apply_shell_window_identity(&popup, role)?;
+
+    if role == ShellWindowRole::MenuFlyout {
         println!("flyout popup created once hidden");
     } else {
         println!("primary menu popup created once hidden");

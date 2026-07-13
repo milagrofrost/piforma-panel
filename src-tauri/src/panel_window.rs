@@ -1,6 +1,7 @@
 use crate::{
     config::PanelConfig,
     panel_model::{MonitorGeometry, PanelGeometry},
+    shell_identity::{apply_shell_window_identity, ShellWindowRole},
 };
 use gtk::prelude::{ContainerExt, GtkWindowExt, WidgetExt};
 
@@ -13,6 +14,7 @@ pub fn configure_main_window(
     phase: &str,
 ) -> Result<PanelGeometry, String> {
     let geometry = effective_panel_geometry(Some(window), config)?;
+    apply_shell_window_identity(window, ShellWindowRole::MainPanel)?;
     log_panel_geometry(config, &geometry);
     window.set_resizable(true).map_err(|err| err.to_string())?;
     window
