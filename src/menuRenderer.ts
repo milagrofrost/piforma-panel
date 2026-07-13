@@ -1,5 +1,6 @@
 import { appleMenu, editMenu, fileMenu, specialMenu, viewMenu } from "./menuDefinitions";
 import type { DesktopApp, MenuAction, MenuItem, PanelConfig, PopupGeometry } from "./panelModel";
+import { SYSTEM_STATUS_ICON_DATA_URL } from "./systemStatusIcon";
 
 export type PanelRenderHandlers = {
   makeMenuButton(className: string): HTMLButtonElement;
@@ -74,8 +75,24 @@ export function renderPanel(options: {
   const clock = document.createElement("div");
   clock.id = "clock";
   clock.className = "clock";
-  right.append(clock);
 
+  const statusButton = handlers.makeMenuButton("system-status-button");
+  statusButton.setAttribute("aria-label", "System status");
+  statusButton.title = "Wireless and Sound";
+  const statusImage = document.createElement("img");
+  statusImage.src = SYSTEM_STATUS_ICON_DATA_URL;
+  statusImage.alt = "";
+  statusButton.append(statusImage);
+  statusButton.addEventListener("click", () => {
+    statusButton.dispatchEvent(
+      new CustomEvent("piforma:toggle-system-status", {
+        bubbles: true
+      })
+    );
+  });
+  handlers.installButtonEventDiagnostics(statusButton, "System status");
+
+  right.append(clock, statusButton);
   bar.append(left, right);
   root.replaceChildren(bar);
   logRenderedMenuDiagnostics(handlers.frontendLog);
@@ -169,7 +186,7 @@ function logRenderedMenuDiagnostics(frontendLog: (message: string) => void) {
   frontendLog(`rendered menu-title count=${menuTitles.length}`);
   frontendLog(`rendered apple button exists=${appleButton !== null}`);
 
-  const buttons = document.querySelectorAll<HTMLElement>(".apple-button, .menu-title");
+  const buttons = document.querySelectorAll<HTMLElement>(".apple-button, .menu-title, .system-status-button");
   buttons.forEach((button, index) => {
     const label = button.getAttribute("aria-label") ?? button.textContent?.trim() ?? "";
     const text = button.textContent?.trim().replace(/\s+/g, " ") ?? "";
