@@ -1,9 +1,6 @@
 import { appleMenu, editMenu, fileMenu, specialMenu, viewMenu } from "./menuDefinitions";
 import type { DesktopApp, MenuAction, MenuItem, PanelConfig, PopupGeometry } from "./panelModel";
 
-const MENU_SHADOW_WIDTH = 2;
-const MENU_SHADOW_HEIGHT = 1;
-
 export type PanelRenderHandlers = {
   makeMenuButton(className: string): HTMLButtonElement;
   menuTitle(label: string, items: MenuItem[]): HTMLButtonElement;
@@ -161,8 +158,8 @@ export function measureMenu(items: MenuItem[], options: { maxHeight?: number } =
   menu.remove();
 
   return {
-    width: Math.max(1, Math.ceil(rect.width) + MENU_SHADOW_WIDTH),
-    height: Math.max(1, Math.ceil(Math.min(rect.height, options.maxHeight ?? rect.height)) + MENU_SHADOW_HEIGHT)
+    width: Math.max(1, Math.ceil(rect.width)),
+    height: Math.max(1, Math.ceil(Math.min(rect.height, options.maxHeight ?? rect.height)))
   };
 }
 
