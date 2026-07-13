@@ -32,6 +32,7 @@ body {
   user-select: none;
   font-family: var(--panel-font), "Chicago", "Geneva", "Tahoma", sans-serif;
   font-size: var(--panel-font-size);
+  font-weight: 400;
 }
 
 html:has(> body.popup-window),
@@ -73,6 +74,7 @@ body.flyout-window #app {
 
 button {
   font: inherit;
+  font-weight: 400;
 }
 
 .menu-bar {
@@ -103,6 +105,7 @@ button {
     inset 1px 0 0 rgba(255, 255, 255, 0.55),
     inset -1px 0 0 rgba(102, 102, 102, 0.55);
   pointer-events: auto;
+  font-weight: 400;
 }
 
 .menu-left,
@@ -137,6 +140,7 @@ button {
   line-height: 18px;
   white-space: nowrap;
   pointer-events: auto;
+  font-weight: 400;
 }
 
 .apple-button {
@@ -145,8 +149,8 @@ button {
 }
 
 .apple-button img {
-  width: 18px;
-  height: 18px;
+  width: 14px;
+  height: 14px;
   object-fit: contain;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
@@ -171,6 +175,7 @@ button {
   line-height: 18px;
   text-align: right;
   white-space: nowrap;
+  font-weight: 400;
 }
 
 .menu {
@@ -186,6 +191,7 @@ button {
     inset -1px -1px 0 var(--classic-shadow);
   font-family: var(--panel-font), "Chicago", "Geneva", "Tahoma", sans-serif;
   font-size: var(--panel-font-size);
+  font-weight: 400;
   line-height: 16px;
 }
 
@@ -227,6 +233,7 @@ button {
   text-align: left;
   line-height: 16px;
   white-space: nowrap;
+  font-weight: 400;
 }
 
 .menu-item.has-submenu {
