@@ -1,4 +1,5 @@
 use crate::{
+    diagnostics,
     panel_window::{format_size_result, MAIN_WINDOW_MIN_HEIGHT, MAIN_WINDOW_MIN_WIDTH},
     shell_identity::{apply_shell_window_identity, ShellWindowRole},
 };
@@ -44,10 +45,12 @@ fn ensure_popup_window(
 
     apply_shell_window_identity(&popup, role)?;
 
-    if role == ShellWindowRole::MenuFlyout {
-        println!("flyout popup created once hidden");
-    } else {
-        println!("primary menu popup created once hidden");
+    if diagnostics::verbose_from_env() {
+        if role == ShellWindowRole::MenuFlyout {
+            println!("flyout popup created once hidden");
+        } else {
+            println!("primary menu popup created once hidden");
+        }
     }
     Ok(popup)
 }
@@ -58,8 +61,10 @@ pub fn hide_menu_popup_window(app: &tauri::AppHandle, emit_closed: bool) {
         if let Err(err) = window.hide() {
             eprintln!("failed to hide primary menu popup: {err}");
         } else {
-            println!("primary menu popup hidden");
-            log_popup_actual_size_unchecked(&window, PRIMARY_MENU_POPUP_LABEL, "hidden");
+            if diagnostics::verbose_from_env() {
+                println!("primary menu popup hidden");
+                log_popup_actual_size_unchecked(&window, PRIMARY_MENU_POPUP_LABEL, "hidden");
+            }
         }
     }
     if emit_closed {
@@ -74,8 +79,10 @@ pub fn hide_menu_flyout_window(app: &tauri::AppHandle) {
         if let Err(err) = window.hide() {
             eprintln!("failed to hide flyout menu popup: {err}");
         } else {
-            println!("flyout hidden");
-            log_popup_actual_size_unchecked(&window, FLYOUT_MENU_POPUP_LABEL, "hidden");
+            if diagnostics::verbose_from_env() {
+                println!("flyout hidden");
+                log_popup_actual_size_unchecked(&window, FLYOUT_MENU_POPUP_LABEL, "hidden");
+            }
         }
     }
 }
@@ -147,7 +154,9 @@ fn apply_popup_gtk_size(
 
     gtk_window.resize(width_i32, height_i32);
 
-    println!("gtk popup size applied: width={width}, height={height}");
+    if diagnostics::verbose_from_env() {
+        println!("gtk popup size applied: width={width}, height={height}");
+    }
     Ok(())
 }
 

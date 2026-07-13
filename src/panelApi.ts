@@ -2,10 +2,30 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { ActionResult, BackendPanelAction, DesktopApp, MenuAction, PanelConfig, PanelState, RenderMenuPopupPayload } from "./panelModel";
 
+let verboseDiagnostics = false;
+
+export function setVerboseDiagnostics(enabled: boolean) {
+  verboseDiagnostics = enabled;
+}
+
 export async function frontendLog(message: string) {
-  console.log(message);
+  if (!verboseDiagnostics) {
+    return true;
+  }
+  console.debug(message);
   try {
-    await invoke("frontend_log", { message });
+    await invoke("frontend_log", { message, verbose: true });
+    return true;
+  } catch (error) {
+    console.error("frontend_log failed", error);
+    return false;
+  }
+}
+
+export async function frontendStatus(message: string) {
+  console.info(message);
+  try {
+    await invoke("frontend_log", { message, verbose: false });
     return true;
   } catch (error) {
     console.error("frontend_log failed", error);

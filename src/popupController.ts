@@ -137,7 +137,6 @@ export class PopupController {
   }
 
   private async toggleMenu(button: HTMLElement, items: MenuItem[]) {
-    console.log("toggleMenu start");
     await api.frontendLog("toggleMenu start");
     if (this.openButton === button) {
       await this.closeMenu();
@@ -348,7 +347,7 @@ export class PopupController {
       return;
     }
     if (this.popupMode === "main" && this.openButton && !this.openButton.contains(target) && !this.isPanelMenuButton(target)) {
-      console.log("outside-click close: main window pointerdown outside active menu button");
+      void api.frontendLog("outside-click close: main window pointerdown outside active menu button");
       void this.closeMenu({ pointerEvent: event }).catch(console.error);
     }
     if ((this.popupMode === "menu" || this.popupMode === "flyout") && target instanceof Element && !target.closest(".menu")) {

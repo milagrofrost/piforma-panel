@@ -44,6 +44,9 @@ menus:
 
 actions:
   clean_up_window_command: ""
+
+diagnostics:
+  verbose: false
 "#;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -56,6 +59,8 @@ pub struct PanelConfig {
     pub menus: MenusConfig,
     #[serde(default)]
     pub actions: ActionsConfig,
+    #[serde(default)]
+    pub diagnostics: DiagnosticsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,6 +113,13 @@ pub struct MenusConfig {
 pub struct ActionsConfig {
     #[serde(default)]
     pub clean_up_window_command: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct DiagnosticsConfig {
+    #[serde(default)]
+    pub verbose: bool,
 }
 
 impl Default for BarConfig {
@@ -288,6 +300,7 @@ mod tests {
         assert_eq!(config.clock.format, "%I:%M %p");
         assert!(config.menus.show_file);
         assert_eq!(config.applications.max_menu_height, 420);
+        assert!(!config.diagnostics.verbose);
     }
 
     #[test]
@@ -406,6 +419,7 @@ applications:
         assert_eq!(config.bar.y, defaults.bar.y);
         assert_eq!(config.clock.format, defaults.clock.format);
         assert_eq!(config.menus.show_file, defaults.menus.show_file);
+        assert_eq!(config.diagnostics.verbose, defaults.diagnostics.verbose);
         assert_eq!(
             config.apple.logo_path,
             format!("{home}/.local/share/piforma-panel/apple-color.png")

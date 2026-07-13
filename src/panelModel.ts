@@ -22,6 +22,9 @@ export type PanelConfig = {
     show_view: boolean;
     show_special: boolean;
   };
+  diagnostics: {
+    verbose: boolean;
+  };
 };
 
 export type PanelGeometry = {

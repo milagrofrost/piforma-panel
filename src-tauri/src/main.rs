@@ -1,5 +1,6 @@
 mod config;
 mod desktop_entries;
+mod diagnostics;
 mod launcher;
 mod panel_actions;
 mod panel_model;
@@ -51,12 +52,16 @@ struct PanelState {
 
 fn main() {
     print_build_info();
-    print_tauri_asset_diagnostics();
+    if diagnostics::verbose_from_env() {
+        print_tauri_asset_diagnostics();
+    }
     tauri::Builder::default()
         .manage(WindowMemory::default())
         .setup(|app| {
             let config = ensure_config().map_err(|err| err.to_string())?;
-            print_config_diagnostics(&config)?;
+            if diagnostics::verbose_for_config(&config) {
+                print_config_diagnostics(&config)?;
+            }
             if let Some(window) = app.get_webview_window("main") {
                 configure_main_window(&window, &config, "setup")?;
             }
@@ -171,10 +176,12 @@ fn get_panel_state(app: tauri::AppHandle) -> Result<PanelState, String> {
 fn initialize_main_window(app: tauri::AppHandle) -> Result<(), String> {
     let config = ensure_config()?;
 
-    println!(
-        "startup main panel set to bar-only: width={}, height={}, x={}, y={}",
-        config.bar.width, config.bar.height, config.bar.x, config.bar.y
-    );
+    if diagnostics::verbose_for_config(&config) {
+        println!(
+            "startup main panel set to bar-only: width={}, height={}, x={}, y={}",
+            config.bar.width, config.bar.height, config.bar.x, config.bar.y
+        );
+    }
 
     if let Some(window) = app.get_webview_window("main") {
         configure_main_window(&window, &config, "frontend-init")?;
@@ -184,8 +191,10 @@ fn initialize_main_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn frontend_log(message: String) {
-    println!("frontend: {message}");
+fn frontend_log(message: String, verbose: Option<bool>) {
+    if verbose.unwrap_or(false) || diagnostics::verbose_from_env() {
+        println!("frontend: {message}");
+    }
 }
 
 #[tauri::command]
@@ -198,7 +207,11 @@ async fn open_menu_popup(
     height: u32,
     items: serde_json::Value,
 ) -> Result<(), String> {
-    println!("open_menu_popup start: label={label}, x={x}, y={y}, width={width}, height={height}");
+    if diagnostics::verbose_from_env() {
+        println!(
+            "open_menu_popup start: label={label}, x={x}, y={y}, width={width}, height={height}"
+        );
+    }
     let popup = ensure_menu_popup_window(&app)?;
 
     popup.hide().map_err(|err| err.to_string())?;
@@ -217,9 +230,11 @@ async fn open_menu_popup(
     popup
         .set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }))
         .map_err(|err| err.to_string())?;
-    println!(
-        "primary menu popup requested before render: label={label}, x={x}, y={y}, width={width}, height={height}"
-    );
+    if diagnostics::verbose_from_env() {
+        println!(
+            "primary menu popup requested before render: label={label}, x={x}, y={y}, width={width}, height={height}"
+        );
+    }
     popup
         .emit(
             "render-menu-popup",
@@ -243,9 +258,11 @@ async fn open_menu_flyout(
     items: serde_json::Value,
 ) -> Result<(), String> {
     let item_count = items.as_array().map_or(0, Vec::len);
-    println!(
-        "flyout requested: label={label}, submenu={submenu}, x={x}, y={y}, width={width}, height={height}, item_count={item_count}"
-    );
+    if diagnostics::verbose_from_env() {
+        println!(
+            "flyout requested: label={label}, submenu={submenu}, x={x}, y={y}, width={width}, height={height}, item_count={item_count}"
+        );
+    }
     let flyout = ensure_menu_flyout_window(&app)?;
 
     flyout.hide().map_err(|err| err.to_string())?;
@@ -293,15 +310,19 @@ fn menu_popup_rendered(
     height: u32,
 ) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(PRIMARY_MENU_POPUP_LABEL) {
-        println!(
-            "primary menu popup requested after render: label={label}, width={width}, height={height}"
-        );
+        if diagnostics::verbose_from_env() {
+            println!(
+                "primary menu popup requested after render: label={label}, width={width}, height={height}"
+            );
+        }
         resize_menu_popup_window(&window, width, height)?;
         window.set_focus().map_err(|err| err.to_string())?;
         window.set_resizable(false).map_err(|err| err.to_string())?;
         window.show().map_err(|err| err.to_string())?;
-        println!("primary menu popup shown: label={label}");
-        log_popup_actual_size(&window, PRIMARY_MENU_POPUP_LABEL, "final", width, height);
+        if diagnostics::verbose_from_env() {
+            println!("primary menu popup shown: label={label}");
+            log_popup_actual_size(&window, PRIMARY_MENU_POPUP_LABEL, "final", width, height);
+        }
     }
     Ok(())
 }
@@ -314,15 +335,19 @@ fn menu_flyout_rendered(
     height: u32,
 ) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(FLYOUT_MENU_POPUP_LABEL) {
-        println!("flyout rendered: label={label}, width={width}, height={height}");
+        if diagnostics::verbose_from_env() {
+            println!("flyout rendered: label={label}, width={width}, height={height}");
+        }
         resize_menu_popup_window(&window, width, height)?;
         window.set_resizable(false).map_err(|err| err.to_string())?;
         window.show().map_err(|err| err.to_string())?;
         if let Err(err) = app.emit("menu-flyout-rendered", ()) {
             eprintln!("failed to emit menu-flyout-rendered: {err}");
         }
-        println!("flyout shown: label={label}, width={width}, height={height}");
-        log_popup_actual_size(&window, FLYOUT_MENU_POPUP_LABEL, "final", width, height);
+        if diagnostics::verbose_from_env() {
+            println!("flyout shown: label={label}, width={width}, height={height}");
+            log_popup_actual_size(&window, FLYOUT_MENU_POPUP_LABEL, "final", width, height);
+        }
     }
     Ok(())
 }
@@ -340,11 +365,14 @@ fn select_menu_action(
     label: String,
     action: serde_json::Value,
 ) -> Result<(), String> {
-    println!("selected menu action: {label}");
+    if diagnostics::verbose_from_env() {
+        println!("selected menu action: {label}");
+    }
     if action
         .get("kind")
         .and_then(serde_json::Value::as_str)
         .is_some_and(|kind| kind == "launch_app")
+        && diagnostics::verbose_from_env()
     {
         println!("flyout application selected: {label}");
     }

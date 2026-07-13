@@ -4,8 +4,6 @@ import { detectPopupMode } from "./panelModel";
 import { PopupController } from "./popupController";
 import "./styles.css";
 
-const STATIC_FRONTEND_MARKER_ID = "static-frontend-marker";
-
 const app = document.querySelector<HTMLDivElement>("#app");
 
 if (!app) {
@@ -14,23 +12,18 @@ if (!app) {
 
 const appRoot = app;
 
-markFrontendLoaded();
-void init();
-
-function markFrontendLoaded() {
-  const marker = document.getElementById(STATIC_FRONTEND_MARKER_ID);
-  if (marker) {
-    marker.textContent = "FRONTEND_JS_STARTED";
-    marker.remove();
-  }
-  void api.frontendLog("frontend top-level loaded");
-}
+void init().catch((error) => {
+  console.error("PiForma Panel frontend initialization failed", error);
+  document.title = "PiForma Panel initialization failed";
+  document.documentElement.dataset.debug = "frontend-init-failed";
+});
 
 async function init() {
   const popupMode = detectPopupMode(window.location.search);
   const panelState = await api.getPanelState();
   const { config, geometry } = panelState;
-  const frontendLogAvailable = await api.frontendLog("frontend init start");
+  api.setVerboseDiagnostics(config.diagnostics.verbose);
+  const frontendLogAvailable = await api.frontendStatus("frontend init start");
   if (!frontendLogAvailable) {
     console.error("frontend init start failed to reach Rust frontend_log");
     document.title = "PiForma Panel frontend_log failed";

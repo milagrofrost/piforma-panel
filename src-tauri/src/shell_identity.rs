@@ -45,14 +45,16 @@ pub fn apply_shell_window_identity(
         .map_err(|err| err.to_string())?;
     let gtk_window = window.gtk_window().map_err(|err| err.to_string())?;
     gtk_window.set_role(role.window_role());
-    println!(
-        "shell window identity applied: label={}, title={}, app_id={}, wm_class={}, window_role={}",
-        role.tauri_label(),
-        role.title(),
-        PIFORMA_PANEL_APP_ID,
-        PIFORMA_PANEL_WM_CLASS,
-        role.window_role()
-    );
+    if crate::diagnostics::verbose_from_env() {
+        println!(
+            "shell window identity applied: label={}, title={}, app_id={}, wm_class={}, window_role={}",
+            role.tauri_label(),
+            role.title(),
+            PIFORMA_PANEL_APP_ID,
+            PIFORMA_PANEL_WM_CLASS,
+            role.window_role()
+        );
+    }
     Ok(())
 }
 

@@ -15,7 +15,10 @@ pub fn configure_main_window(
 ) -> Result<PanelGeometry, String> {
     let geometry = effective_panel_geometry(Some(window), config)?;
     apply_shell_window_identity(window, ShellWindowRole::MainPanel)?;
-    log_panel_geometry(config, &geometry);
+    let verbose = crate::diagnostics::verbose_for_config(config);
+    if verbose {
+        log_panel_geometry(config, &geometry);
+    }
     window.set_resizable(true).map_err(|err| err.to_string())?;
     window
         .set_min_size(Some(tauri::Size::Physical(tauri::PhysicalSize {
@@ -32,14 +35,16 @@ pub fn configure_main_window(
             height: geometry.height,
         }))
         .map_err(|err| err.to_string())?;
-    apply_main_gtk_size(window, geometry.width, geometry.height)?;
+    apply_main_gtk_size(window, geometry.width, geometry.height, verbose)?;
     window
         .set_position(tauri::Position::Physical(tauri::PhysicalPosition {
             x: geometry.x,
             y: geometry.y,
         }))
         .map_err(|err| err.to_string())?;
-    log_main_window_actual_size(window, phase);
+    if verbose {
+        log_main_window_actual_size(window, phase);
+    }
     window.show().map_err(|err| err.to_string())?;
     window.set_resizable(false).map_err(|err| err.to_string())?;
     Ok(geometry)
@@ -97,6 +102,7 @@ fn apply_main_gtk_size(
     window: &tauri::WebviewWindow,
     width: u32,
     height: u32,
+    verbose: bool,
 ) -> Result<(), String> {
     let width_i32 = i32::try_from(width).map_err(|err| err.to_string())?;
     let height_i32 = i32::try_from(height).map_err(|err| err.to_string())?;
@@ -112,7 +118,9 @@ fn apply_main_gtk_size(
         }
     }
 
-    println!("gtk tight size applied: label=main, width={width}, height={height}");
+    if verbose {
+        println!("gtk tight size applied: label=main, width={width}, height={height}");
+    }
     Ok(())
 }
 

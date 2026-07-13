@@ -75,31 +75,24 @@ npm run tauri -- build
 
 The generated package is written under `src-tauri/target/release/bundle/deb/`.
 
-### Packaged frontend diagnostics
+### Diagnostics
 
-Release builds are configured to bundle the Vite output from `../dist` through
-`build.frontendDist` in `src-tauri/tauri.conf.json`. This debug branch also
-sets `app.security.csp` to `null` so CSP should not block the bundled frontend.
+Normal startup prints concise build identity and startup failures. Verbose
+frontend, popup, geometry, and packaged-asset diagnostics are disabled by
+default. Enable them temporarily with either:
 
-Before packaging, confirm the built frontend contains both the static HTML
-marker and the JavaScript diagnostics:
-
-```sh
-grep -R FRONTEND_STATIC_MARKER dist
-grep -R "frontend init start" dist
+```yaml
+diagnostics:
+  verbose: true
 ```
 
-After installing a package, confirm the installed binary was built from this
-frontend/config state:
+or:
 
 ```sh
-strings /usr/bin/piforma-panel | grep FRONTEND
+PIFORMA_PANEL_DEBUG=1 piforma-panel
 ```
 
-At runtime, the app should print `frontend top-level loaded` as soon as the
-frontend module starts and `frontend init start` when initialization reaches
-Rust. If the static `FRONTEND_STATIC_MARKER` remains visible in the panel, the
-HTML loaded but the JavaScript bundle did not execute.
+Keep verbose diagnostics disabled for normal packaged sessions.
 
 ## Configuration
 
@@ -149,6 +142,9 @@ menus:
 
 actions:
   clean_up_window_command: ""
+
+diagnostics:
+  verbose: false
 ```
 
 Configuration is backward-compatible with partial files: missing sections and
