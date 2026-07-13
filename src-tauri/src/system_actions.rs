@@ -11,6 +11,9 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::process::{Command, Stdio};
 
+#[path = "window_management.rs"]
+mod window_management;
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SystemActionId {
@@ -49,11 +52,11 @@ pub fn run_system_action_id(
         ),
         SystemActionId::ShowAllWindows => {
             hide_menu_popup_window(app, true);
-            ActionResult::from_command_result(crate::window_management::show_all_windows())
+            ActionResult::from_command_result(window_management::show_all_windows())
         }
         SystemActionId::ShowDesktop => {
             hide_menu_popup_window(app, true);
-            ActionResult::from_command_result(crate::window_management::toggle_show_desktop())
+            ActionResult::from_command_result(window_management::toggle_show_desktop())
         }
         SystemActionId::Refresh => {
             hide_menu_popup_window(app, true);
