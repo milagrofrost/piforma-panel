@@ -95,10 +95,12 @@ On first launch, PiForma Panel creates:
 Default configuration:
 
 ```yaml
+# PiForma Panel config.
+# Missing sections and fields use the defaults shown here.
 bar:
-  width: 656
+  width: 658
   height: 20
-  x: 77
+  x: 76
   y: 0
   radius_top_left: 18
   radius_top_right: 18
@@ -106,7 +108,7 @@ bar:
   font_size: 13
 
 apple:
-  logo_path: /home/frost/.local/share/piforma-panel/apple-color.png
+  logo_path: ~/.local/share/piforma-panel/apple-color.png
 
 clock:
   enabled: true
@@ -114,7 +116,7 @@ clock:
 
 applications:
   scan_dirs:
-    - /home/frost/.local/share/applications
+    - ~/.local/share/applications
     - /usr/local/share/applications
     - /usr/share/applications
   show_no_display: false
@@ -127,7 +129,17 @@ menus:
   show_edit: true
   show_view: true
   show_special: true
+
+actions:
+  clean_up_window_command: ""
 ```
+
+Configuration is backward-compatible with partial files: missing sections and
+fields use these defaults. User paths beginning with `~` are expanded at load
+time. Unsafe numeric values are normalized before use: panel width and height,
+font size, and maximum menu height are clamped to at least `1`; corner radii are
+clamped to at least `0`; very large values are capped to protect window and menu
+geometry.
 
 After editing the configuration, restart the app to apply window size, position, menu visibility, and launcher scanning changes.
 
