@@ -41,8 +41,8 @@ export function editMenu(): MenuItem[] {
 
 export function viewMenu(): MenuItem[] {
   return [
-    { kind: "item", label: "Show All Windows", action: { kind: "run_system_action", action: "show_all_windows", confirmed: false } },
     { kind: "item", label: "Show Desktop", action: { kind: "run_system_action", action: "show_desktop", confirmed: false } },
+    { kind: "item", label: "Show All Windows", action: { kind: "run_system_action", action: "show_all_windows", confirmed: false } },
     { kind: "separator" },
     { kind: "item", label: "Refresh", action: { kind: "run_system_action", action: "refresh", confirmed: false } }
   ];
