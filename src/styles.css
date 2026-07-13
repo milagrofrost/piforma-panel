@@ -200,7 +200,7 @@ button {
   box-shadow:
     inset 1px 1px 0 var(--classic-highlight),
     inset -1px -1px 0 var(--classic-shadow),
-    var(--menu-shadow-x) var(--menu-shadow-y) 0 rgba(0, 0, 0, 0.72);
+    var(--menu-shadow-x) var(--menu-shadow-y) 0 #000;
   font-family: var(--panel-font), "Chicago", "Geneva", "Tahoma", sans-serif;
   font-size: var(--panel-font-size);
   font-weight: 400;
@@ -219,8 +219,9 @@ button {
 
 .flyout-window .menu {
   position: relative;
+  top: 1px;
   display: block;
-  overflow-x: hidden;
+  overflow-x: visible;
 }
 
 .measure-menu {
