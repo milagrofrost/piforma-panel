@@ -7,6 +7,7 @@ import "./styles.css";
 import "./macOs9Theme.css";
 import "./menuShadowFix.css";
 import "./systemStatusMenu.css";
+import "./systemStatusAssets";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
