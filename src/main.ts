@@ -1,4 +1,4 @@
-import { BUILT_IN_APPLE_LOGO_DATA_URL, shouldUseBuiltInAppleLogo } from "./appleLogo";
+import { BUILT_IN_APPLE_LOGO_DATA_URL } from "./appleLogo";
 import { startClock } from "./clock";
 import * as api from "./panelApi";
 import { detectPopupMode } from "./panelModel";
@@ -59,10 +59,7 @@ async function init() {
   }
 
   await api.initializeMainWindow();
-  const customLogo = shouldUseBuiltInAppleLogo(config.apple.logo_path)
-    ? null
-    : await api.getAppleLogoDataUrl();
-  const logo = customLogo ?? BUILT_IN_APPLE_LOGO_DATA_URL;
+  const logo = BUILT_IN_APPLE_LOGO_DATA_URL;
   const [applications, controlPanels] = await Promise.all([api.listApplications(), api.listControlPanels()]);
 
   await popupController.initializeMainPanel(logo, applications, controlPanels);
