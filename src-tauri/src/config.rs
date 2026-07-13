@@ -46,7 +46,7 @@ actions:
   clean_up_window_command: ""
 "#;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PanelConfig {
     pub bar: BarConfig,
@@ -108,19 +108,6 @@ pub struct MenusConfig {
 pub struct ActionsConfig {
     #[serde(default)]
     pub clean_up_window_command: String,
-}
-
-impl Default for PanelConfig {
-    fn default() -> Self {
-        Self {
-            bar: BarConfig::default(),
-            apple: AppleConfig::default(),
-            clock: ClockConfig::default(),
-            applications: ApplicationsConfig::default(),
-            menus: MenusConfig::default(),
-            actions: ActionsConfig::default(),
-        }
-    }
 }
 
 impl Default for BarConfig {

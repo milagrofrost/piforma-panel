@@ -11,12 +11,15 @@ function updateClock(config: PanelConfig) {
     return;
   }
 
-  const now = new Date();
+  clock.textContent = formatClockTime(new Date(), config.clock.format);
+}
+
+export function formatClockTime(now: Date, format: string) {
   const hour = now.getHours();
   const minute = now.getMinutes().toString().padStart(2, "0");
   const hour12 = hour % 12 || 12;
   const ampm = hour >= 12 ? "PM" : "AM";
-  clock.textContent = config.clock.format
+  return format
     .replace("%I", hour12.toString().padStart(2, "0"))
     .replace("%M", minute)
     .replace("%p", ampm);

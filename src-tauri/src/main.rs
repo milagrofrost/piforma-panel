@@ -231,6 +231,7 @@ async fn open_menu_popup(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn open_menu_flyout(
     app: tauri::AppHandle,
     label: String,

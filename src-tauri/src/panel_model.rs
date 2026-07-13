@@ -27,12 +27,14 @@ pub struct MonitorGeometry {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub struct PopupAnchor {
     pub x: i32,
     pub y: i32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub struct TopStrutSpan {
     pub x: i32,
     pub y: i32,
@@ -74,6 +76,7 @@ impl PanelGeometry {
         })
     }
 
+    #[allow(dead_code)]
     pub fn popup_anchor(&self, button_left: f64) -> PopupAnchor {
         PopupAnchor {
             x: self.x + button_left.floor() as i32,
@@ -81,6 +84,7 @@ impl PanelGeometry {
         }
     }
 
+    #[allow(dead_code)]
     pub fn top_strut_span(&self) -> TopStrutSpan {
         TopStrutSpan {
             x: self.x,

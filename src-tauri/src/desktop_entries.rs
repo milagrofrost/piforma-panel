@@ -156,3 +156,115 @@ fn broad_group(categories: &[String]) -> String {
     }
     "Other".to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn temp_desktop_dir() -> PathBuf {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be valid")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "piforma-panel-desktop-test-{}-{timestamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path).expect("test desktop dir should be created");
+        path
+    }
+
+    fn write_desktop(dir: &Path, name: &str, contents: &str) {
+        fs::write(dir.join(name), contents).expect("desktop test file should be written");
+    }
+
+    #[test]
+    fn scans_visible_desktop_applications() {
+        let dir = temp_desktop_dir();
+        write_desktop(
+            &dir,
+            "calculator.desktop",
+            r#"
+[Desktop Entry]
+Type=Application
+Name=Calculator
+Exec=xcalc %U
+Icon=accessories-calculator
+Categories=Utility;Calculator;
+"#,
+        );
+        let mut config = PanelConfig::default();
+        config.applications.scan_dirs = vec![dir.display().to_string()];
+
+        let apps = scan_desktop_apps(&config).expect("desktop scan should succeed");
+
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].id, "calculator.desktop");
+        assert_eq!(apps[0].name, "Calculator");
+        assert_eq!(apps[0].exec, "xcalc %U");
+        assert_eq!(apps[0].icon.as_deref(), Some("accessories-calculator"));
+        assert_eq!(apps[0].group, "System");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn filters_no_display_apps_unless_enabled() {
+        let dir = temp_desktop_dir();
+        write_desktop(
+            &dir,
+            "hidden.desktop",
+            r#"
+[Desktop Entry]
+Type=Application
+Name=Hidden
+Exec=hidden
+NoDisplay=true
+"#,
+        );
+        let mut config = PanelConfig::default();
+        config.applications.scan_dirs = vec![dir.display().to_string()];
+
+        assert!(scan_desktop_apps(&config)
+            .expect("desktop scan should succeed")
+            .is_empty());
+
+        config.applications.show_no_display = true;
+        assert_eq!(
+            scan_desktop_apps(&config)
+                .expect("desktop scan should succeed")
+                .len(),
+            1
+        );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn identifies_control_panel_categories() {
+        let dir = temp_desktop_dir();
+        write_desktop(
+            &dir,
+            "settings.desktop",
+            r#"
+[Desktop Entry]
+Type=Application
+Name=Settings
+Exec=settings
+Categories=Settings;HardwareSettings;
+"#,
+        );
+        let mut config = PanelConfig::default();
+        config.applications.scan_dirs = vec![dir.display().to_string()];
+
+        let apps = scan_desktop_apps(&config).expect("desktop scan should succeed");
+
+        assert_eq!(apps.len(), 1);
+        assert!(apps[0].is_control_panel);
+        assert_eq!(apps[0].group, "Settings");
+        fs::remove_dir_all(dir).ok();
+    }
+}

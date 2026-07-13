@@ -50,6 +50,23 @@ Build the frontend:
 npm run build
 ```
 
+Run lightweight frontend checks:
+
+```sh
+npm run typecheck
+npm test
+npm run check
+```
+
+Run lightweight Rust checks:
+
+```sh
+cd src-tauri
+cargo fmt --check
+cargo test
+cargo clippy --all-targets -- -D warnings
+```
+
 Build the Debian package configured in `src-tauri/tauri.conf.json`:
 
 ```sh
