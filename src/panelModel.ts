@@ -82,6 +82,7 @@ export type ShortcutAction = "undo" | "cut" | "copy" | "paste" | "clear" | "sele
 export type SystemActionId =
   | "sleep_display"
   | "show_desktop"
+  | "show_all_windows"
   | "refresh"
   | "clean_up_window"
   | "restart"
