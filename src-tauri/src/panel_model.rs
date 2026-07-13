@@ -27,19 +27,47 @@ pub struct MonitorGeometry {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub struct PopupAnchor {
     pub x: i32,
     pub y: i32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub struct TopStrutSpan {
     pub x: i32,
     pub y: i32,
     pub width: u32,
     pub height: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EwmhTopStrut {
+    pub top: u32,
+    pub start_x: u32,
+    pub end_x: u32,
+}
+
+impl EwmhTopStrut {
+    pub fn basic_values(self) -> [u32; 4] {
+        [0, 0, self.top, 0]
+    }
+
+    pub fn partial_values(self) -> [u32; 12] {
+        [
+            0,
+            0,
+            self.top,
+            0,
+            0,
+            0,
+            0,
+            0,
+            self.start_x,
+            self.end_x,
+            0,
+            0,
+        ]
+    }
 }
 
 impl Default for MonitorGeometry {
@@ -76,7 +104,6 @@ impl PanelGeometry {
         })
     }
 
-    #[allow(dead_code)]
     pub fn popup_anchor(&self, button_left: f64) -> PopupAnchor {
         PopupAnchor {
             x: self.x + button_left.floor() as i32,
@@ -84,13 +111,32 @@ impl PanelGeometry {
         }
     }
 
-    #[allow(dead_code)]
     pub fn top_strut_span(&self) -> TopStrutSpan {
         TopStrutSpan {
             x: self.x,
             y: self.y,
             width: self.width,
             height: self.height,
+        }
+    }
+
+    pub fn ewmh_top_strut(&self) -> EwmhTopStrut {
+        let top = i64::from(self.y)
+            .max(0)
+            .saturating_add(i64::from(self.height))
+            .min(i64::from(u32::MAX)) as u32;
+        let start_x = i64::from(self.x).max(0).min(i64::from(u32::MAX)) as u32;
+        let raw_end_x = i64::from(self.x)
+            .saturating_add(i64::from(self.width))
+            .saturating_sub(1);
+        let end_x = raw_end_x
+            .max(i64::from(start_x))
+            .min(i64::from(u32::MAX)) as u32;
+
+        EwmhTopStrut {
+            top,
+            start_x,
+            end_x,
         }
     }
 }
@@ -145,26 +191,56 @@ mod tests {
 
     #[test]
     fn popup_anchor_uses_effective_panel_origin_and_height() {
-        let geometry = PanelGeometry {
-            monitor_id: None,
-            monitor_origin_x: 0,
-            monitor_origin_y: 0,
-            monitor_width: Some(1024),
-            monitor_height: Some(600),
-            x: 76,
-            y: 0,
-            width: 658,
-            height: 20,
-            scale_factor: 1.0,
-            coordinate_space: "physical",
-        };
+        let geometry = test_geometry();
 
         assert_eq!(geometry.popup_anchor(35.8), PopupAnchor { x: 111, y: 20 });
     }
 
     #[test]
     fn top_strut_span_matches_effective_panel_span() {
-        let geometry = PanelGeometry {
+        let geometry = test_geometry();
+
+        assert_eq!(
+            geometry.top_strut_span(),
+            TopStrutSpan {
+                x: 76,
+                y: 0,
+                width: 658,
+                height: 20
+            }
+        );
+    }
+
+    #[test]
+    fn ewmh_top_strut_reserves_panel_depth_and_horizontal_span() {
+        let geometry = test_geometry();
+        let strut = geometry.ewmh_top_strut();
+
+        assert_eq!(
+            strut,
+            EwmhTopStrut {
+                top: 20,
+                start_x: 76,
+                end_x: 733
+            }
+        );
+        assert_eq!(strut.basic_values(), [0, 0, 20, 0]);
+        assert_eq!(
+            strut.partial_values(),
+            [0, 0, 20, 0, 0, 0, 0, 0, 76, 733, 0, 0]
+        );
+    }
+
+    #[test]
+    fn ewmh_top_strut_includes_positive_top_offset() {
+        let mut geometry = test_geometry();
+        geometry.y = 4;
+
+        assert_eq!(geometry.ewmh_top_strut().top, 24);
+    }
+
+    fn test_geometry() -> PanelGeometry {
+        PanelGeometry {
             monitor_id: Some("panel".to_string()),
             monitor_origin_x: 0,
             monitor_origin_y: 0,
@@ -176,16 +252,6 @@ mod tests {
             height: 20,
             scale_factor: 1.0,
             coordinate_space: "physical",
-        };
-
-        assert_eq!(
-            geometry.top_strut_span(),
-            TopStrutSpan {
-                x: 76,
-                y: 0,
-                width: 658,
-                height: 20
-            }
-        );
+        }
     }
 }
