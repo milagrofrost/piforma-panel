@@ -56,7 +56,7 @@ pub fn run_system_action_id(
         }
         SystemActionId::ShowDesktop => {
             hide_menu_popup_window(app, true);
-            ActionResult::from_command_result(window_management::toggle_show_desktop())
+            ActionResult::from_command_result(window_management::show_desktop())
         }
         SystemActionId::Refresh => {
             hide_menu_popup_window(app, true);
