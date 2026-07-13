@@ -76,8 +76,9 @@ pub fn toggle_show_desktop() -> Result<(), String> {
     let preserved_apps = load_show_desktop_apps()?;
     let preserve_setup = preserved_apps
         .iter()
-        .filter(|name| !name.trim().is_empty())
-        .map(|name| format!("printf '%s\\n' {} >> \"$preserve\"", shell_quote(name.trim())))
+        .map(|name| normalize_window_identity(name))
+        .filter(|name| !name.is_empty())
+        .map(|name| format!("printf '%s\\n' {} >> \"$preserve\"", shell_quote(&name)))
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -109,9 +110,22 @@ wmctrl -lx | while read -r id desktop class host title; do
   case "$props" in
     *DOCK*|*DESKTOP*|*SPLASH*|*TOOLTIP*|*NOTIFICATION*) continue ;;
   esac
-  identity="$class $title"
-  if [ -s "$preserve" ] && printf '%s\n' "$identity" | grep -Fqi -f "$preserve"; then
+  identity="$(printf '%s' "$class $title" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]')"
+  if [ -s "$preserve" ] && grep -Fqx -f "$preserve" <<EOF
+$identity
+EOF
+  then
     continue
+  fi
+  if [ -s "$preserve" ]; then
+    matched=0
+    while IFS= read -r wanted; do
+      [ -n "$wanted" ] || continue
+      case "$identity" in
+        *"$wanted"*) matched=1; break ;;
+      esac
+    done < "$preserve"
+    [ "$matched" -eq 1 ] && continue
   fi
   printf '%s\n' "$id" >> "$state"
 done
@@ -136,6 +150,14 @@ fn load_show_desktop_apps() -> Result<Vec<String>, String> {
     let settings: ShowDesktopSettings = serde_yaml::from_str(&contents)
         .map_err(|err| format!("invalid config.yaml: {err}"))?;
     Ok(settings.show_desktop_apps)
+}
+
+fn normalize_window_identity(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 fn shell_quote(value: &str) -> String {
@@ -172,5 +194,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(settings.show_desktop_apps.len(), 4);
+    }
+
+    #[test]
+    fn window_identity_normalization_ignores_spacing_and_punctuation() {
+        assert_eq!(normalize_window_identity("At Ease"), "atease");
+        assert_eq!(
+            normalize_window_identity("controlstrip-simulator.Controlstrip-simulator"),
+            "controlstripsimulatorcontrolstripsimulator"
+        );
+        assert_eq!(normalize_window_identity("PiForma Panel"), "piformapanel");
     }
 }
