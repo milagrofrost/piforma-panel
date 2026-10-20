@@ -53,6 +53,10 @@ export async function openNetworkSettings() {
   await invoke("open_network_settings");
 }
 
+export async function openSoundOptions() {
+  await invoke("open_sound_options");
+}
+
 export async function initializeMainWindow() {
   await invoke("initialize_main_window");
 }
