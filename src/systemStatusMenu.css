@@ -33,6 +33,8 @@
   padding: 1px;
   box-sizing: border-box;
   overflow: hidden;
+  /* The generic menu drop shadow can protrude beyond this tight popup. */
+  box-shadow: inset 1px 1px 0 var(--classic-highlight), inset -1px -1px 0 var(--classic-shadow);
 }
 
 .system-status-network-row {
