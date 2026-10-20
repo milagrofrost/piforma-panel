@@ -80,6 +80,7 @@ fn main() {
             get_system_status,
             set_system_volume,
             open_network_settings,
+            open_sound_options,
             open_menu_popup,
             open_menu_flyout,
             close_menu_popup,
@@ -214,6 +215,11 @@ fn set_system_volume(volume: u8) -> Result<(), String> {
 #[tauri::command]
 fn open_network_settings() -> Result<(), String> {
     system_status::open_network_settings()
+}
+
+#[tauri::command]
+fn open_sound_options() -> Result<(), String> {
+    system_status::open_sound_options()
 }
 
 #[tauri::command]
