@@ -5,7 +5,7 @@ import { serializeLogValue } from "./panelModel";
 
 const DEBUG_EVENT_DIAGNOSTICS = false;
 const SYSTEM_STATUS_LABEL = "System Status";
-const SYSTEM_STATUS_POPUP_WIDTH = 222;
+const SYSTEM_STATUS_POPUP_WIDTH = 190; // 188px menu + 2px shadow
 const SYSTEM_STATUS_POPUP_HEIGHT = 79;
 
 export class PopupController {
