@@ -87,6 +87,12 @@ pub fn set_system_volume(volume: u8) -> Result<(), String> {
     Err("no supported system volume tool found; expected wpctl, pactl, or amixer".to_string())
 }
 
+pub fn open_sound_options() -> Result<(), String> {
+    spawn_detached_with_fallbacks(&[
+        vec!["pavucontrol".to_string()],
+    ])
+}
+
 pub fn open_network_settings() -> Result<(), String> {
     if let Some(command) = network_manager_override() {
         return spawn_detached_shell(&command);
