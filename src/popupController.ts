@@ -328,7 +328,23 @@ export class PopupController {
     });
 
     volumeRow.append(speaker, slider);
-    menu.append(networkRow, separator, volumeRow);
+
+    const soundOptionsRow = document.createElement("button");
+    soundOptionsRow.type = "button";
+    soundOptionsRow.className = "system-status-sound-options-row";
+    soundOptionsRow.setAttribute("role", "menuitem");
+    soundOptionsRow.textContent = "Sound Options";
+    soundOptionsRow.title = "Open audio device and application settings";
+    soundOptionsRow.addEventListener("click", () => {
+      void (async () => {
+        await this.closeMenu();
+        await api.openSoundOptions();
+      })().catch(async (error) => {
+        await api.frontendLog(`open_sound_options failed: ${serializeLogValue(error)}`);
+      });
+    });
+
+    menu.append(networkRow, separator, volumeRow, soundOptionsRow);
     this.root.replaceChildren(menu);
     void api.frontendLog(
       `system status popup rendered ssid=${status.ssid ?? "none"}, internet=${status.internet_available}, volume=${status.volume}, audio=${status.audio_available}`
