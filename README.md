@@ -2,6 +2,8 @@
 
 PiForma Panel is a Tauri 2 desktop panel that recreates a classic Macintosh-style menu bar for PiForma Linux desktops. It renders a compact transparent window at the top of the screen, loads menu behavior from the local system, and exposes common desktop actions from Apple, File, Edit, View, and Special menus.
 
+![PiForma Panel on the Pi with the Special menu open](docs/images/panel-screenshot.png)
+
 ## Features
 
 - Fixed-position 656 x 20 pixel menu bar with classic monochrome menu styling.
